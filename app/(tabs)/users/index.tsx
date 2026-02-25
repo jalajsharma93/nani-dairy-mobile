@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from "rea
 import { DairyColors } from "../../constants/dairy-theme";
 import {
   AuthApi,
+  AuthUserAuditResponse,
   AuthUserResponse,
   CreateAuthUserPayload,
   UpdateAuthUserPayload,
@@ -14,13 +15,16 @@ import { useI18n } from "../../state/i18n";
 const ROLE_OPTIONS: UserRole[] = ["ADMIN", "MANAGER", "WORKER", "FEED_MANAGER", "DELIVERY", "VET"];
 
 export default function UsersScreen() {
-  const { hasAnyRole } = useAuth();
+  const { hasAnyRole, user: currentUser } = useAuth();
   const { x } = useI18n();
   const isAdmin = hasAnyRole("ADMIN");
 
   const [loading, setLoading] = useState(false);
+  const [auditsLoading, setAuditsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resetOnlySaving, setResetOnlySaving] = useState(false);
   const [users, setUsers] = useState<AuthUserResponse[]>([]);
+  const [audits, setAudits] = useState<AuthUserAuditResponse[]>([]);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [fullName, setFullName] = useState("");
@@ -48,9 +52,28 @@ export default function UsersScreen() {
     }
   }, [isAdmin, x]);
 
+  const loadAudits = useCallback(async () => {
+    if (!isAdmin) {
+      return;
+    }
+    setAuditsLoading(true);
+    try {
+      const rows = await AuthApi.listUserAudits(40);
+      setAudits(rows);
+    } catch (e: any) {
+      Alert.alert(
+        x("Failed to load audit logs", "ऑडिट लॉग लोड नहीं हुए"),
+        e?.message ?? x("Please try again.", "कृपया फिर कोशिश करें।")
+      );
+    } finally {
+      setAuditsLoading(false);
+    }
+  }, [isAdmin, x]);
+
   useEffect(() => {
     loadUsers();
-  }, [loadUsers]);
+    loadAudits();
+  }, [loadAudits, loadUsers]);
 
   const clearForm = useCallback(() => {
     setEditingUserId(null);
@@ -69,6 +92,42 @@ export default function UsersScreen() {
     setRole(item.role);
     setActive(item.active);
   }, []);
+
+  const onDeactivate = useCallback(
+    (item: AuthUserResponse) => {
+      if (!item.active) {
+        return;
+      }
+      Alert.alert(
+        x("Deactivate user?", "यूज़र निष्क्रिय करें?"),
+        x(`This will block login for @${item.username}.`, `इससे @${item.username} लॉगिन नहीं कर पाएगा।`),
+        [
+          { text: x("Cancel", "रद्द"), style: "cancel" },
+          {
+            text: x("Deactivate", "निष्क्रिय करें"),
+            style: "destructive",
+            onPress: async () => {
+              try {
+                await AuthApi.deactivateUser(item.userId);
+                if (editingUserId === item.userId) {
+                  clearForm();
+                }
+                await loadUsers();
+                await loadAudits();
+                Alert.alert(x("Done", "हो गया"), x("User deactivated.", "यूज़र निष्क्रिय कर दिया गया।"));
+              } catch (e: any) {
+                Alert.alert(
+                  x("Action failed", "एक्शन असफल"),
+                  e?.message ?? x("Please try again.", "कृपया फिर कोशिश करें।")
+                );
+              }
+            },
+          },
+        ]
+      );
+    },
+    [clearForm, editingUserId, loadAudits, loadUsers, x]
+  );
 
   const onSave = useCallback(async () => {
     if (!isAdmin) {
@@ -129,7 +188,7 @@ export default function UsersScreen() {
         await AuthApi.createUser(payload);
         Alert.alert(x("Created", "बन गया"), x("User created successfully.", "यूज़र सफलतापूर्वक बन गया।"));
       }
-      await loadUsers();
+      await Promise.all([loadUsers(), loadAudits()]);
       clearForm();
     } catch (e: any) {
       Alert.alert(
@@ -139,7 +198,35 @@ export default function UsersScreen() {
     } finally {
       setSaving(false);
     }
-  }, [active, clearForm, editingUserId, fullName, isAdmin, isEditMode, loadUsers, password, role, username, x]);
+  }, [active, clearForm, editingUserId, fullName, isAdmin, isEditMode, loadAudits, loadUsers, password, role, username, x]);
+
+  const onResetPasswordOnly = useCallback(async () => {
+    if (!isAdmin || !isEditMode || !editingUserId) {
+      return;
+    }
+    if (password.trim().length < 6) {
+      Alert.alert(
+        x("Invalid password", "पासवर्ड सही नहीं"),
+        x("New password must be at least 6 characters.", "नया पासवर्ड कम से कम 6 अक्षर का होना चाहिए।")
+      );
+      return;
+    }
+
+    setResetOnlySaving(true);
+    try {
+      await AuthApi.resetUserPassword(editingUserId, { newPassword: password.trim() });
+      setPassword("");
+      await loadAudits();
+      Alert.alert(x("Password reset", "पासवर्ड रीसेट"), x("Password reset successfully.", "पासवर्ड सफलतापूर्वक रीसेट हुआ।"));
+    } catch (e: any) {
+      Alert.alert(
+        x("Reset failed", "रीसेट असफल"),
+        e?.message ?? x("Please try again.", "कृपया फिर कोशिश करें।")
+      );
+    } finally {
+      setResetOnlySaving(false);
+    }
+  }, [editingUserId, isAdmin, isEditMode, loadAudits, password, x]);
 
   const roleLabel = useMemo(
     () => (value: UserRole) =>
@@ -188,7 +275,9 @@ export default function UsersScreen() {
           </Text>
         </View>
         <Pressable
-          onPress={loadUsers}
+          onPress={async () => {
+            await Promise.all([loadUsers(), loadAudits()]);
+          }}
           style={{
             borderWidth: 1,
             borderColor: DairyColors.border,
@@ -199,7 +288,7 @@ export default function UsersScreen() {
           }}
         >
           <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-            {loading ? x("Loading...", "लोड हो रहा...") : x("Refresh", "रीफ्रेश")}
+            {loading || auditsLoading ? x("Loading...", "लोड हो रहा...") : x("Refresh", "रीफ्रेश")}
           </Text>
         </Pressable>
       </View>
@@ -359,6 +448,26 @@ export default function UsersScreen() {
             </Text>
           </Pressable>
         </View>
+
+        {isEditMode ? (
+          <Pressable
+            onPress={onResetPasswordOnly}
+            disabled={resetOnlySaving}
+            style={{
+              marginTop: 10,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.info,
+              backgroundColor: DairyColors.infoSoft,
+              paddingVertical: 11,
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: DairyColors.info, fontWeight: "800" }}>
+              {resetOnlySaving ? x("Resetting...", "रीसेट हो रहा...") : x("Reset Password Only", "केवल पासवर्ड रीसेट करें")}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View
@@ -395,6 +504,8 @@ export default function UsersScreen() {
                     {item.active ? x("Active", "सक्रिय") : x("Inactive", "निष्क्रिय")}
                   </Text>
                 </View>
+              </View>
+              <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
                 <Pressable
                   onPress={() => onEdit(item)}
                   style={{
@@ -406,15 +517,79 @@ export default function UsersScreen() {
                     backgroundColor: DairyColors.primarySoft,
                   }}
                 >
-                  <Text style={{ color: DairyColors.primary, fontWeight: "800" }}>
-                    {x("Edit", "बदलें")}
-                  </Text>
+                  <Text style={{ color: DairyColors.primary, fontWeight: "800" }}>{x("Edit", "बदलें")}</Text>
                 </Pressable>
+                {item.active ? (
+                  <Pressable
+                    onPress={() => onDeactivate(item)}
+                    disabled={item.username === currentUser?.username}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.danger,
+                      borderRadius: 999,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      backgroundColor:
+                        item.username === currentUser?.username ? DairyColors.surface : DairyColors.dangerSoft,
+                      opacity: item.username === currentUser?.username ? 0.55 : 1,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.danger, fontWeight: "800" }}>
+                      {item.username === currentUser?.username
+                        ? x("Current User", "वर्तमान यूज़र")
+                        : x("Deactivate", "निष्क्रिय")}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             </View>
           ))}
           {!users.length ? (
             <Text style={{ color: DairyColors.textSecondary }}>{x("No users found.", "कोई यूज़र नहीं मिला।")}</Text>
+          ) : null}
+        </View>
+      </View>
+
+      <View
+        style={{
+          marginTop: 14,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 14,
+          backgroundColor: DairyColors.surface,
+          padding: 12,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
+          {x("Recent User Audits", "हाल के यूज़र ऑडिट")} ({audits.length})
+        </Text>
+        <View style={{ marginTop: 10, gap: 8 }}>
+          {audits.map((row) => (
+            <View
+              key={row.auditId}
+              style={{
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                padding: 8,
+                backgroundColor: DairyColors.surfaceMuted,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {row.action} | {row.targetUsername ?? "-"}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x("By", "किसने")}: {row.actorUsername} | {new Date(row.createdAt).toLocaleString()}
+              </Text>
+              {row.details ? (
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{row.details}</Text>
+              ) : null}
+            </View>
+          ))}
+          {!audits.length ? (
+            <Text style={{ color: DairyColors.textSecondary }}>
+              {x("No audit records found.", "कोई ऑडिट रिकॉर्ड नहीं मिला।")}
+            </Text>
           ) : null}
         </View>
       </View>

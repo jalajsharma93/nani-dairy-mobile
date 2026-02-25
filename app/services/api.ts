@@ -57,6 +57,7 @@ export type FeedMaterialUnit = "KG" | "LITER" | "BAG" | "UNIT";
 export type FeedSopTaskPriority = "LOW" | "MEDIUM" | "HIGH";
 export type FeedSopTaskStatus = "PENDING" | "IN_PROGRESS" | "DONE";
 export type CustomerType = "COOPERATIVE" | "RETAIL" | "INDIVIDUAL";
+export type SubscriptionFrequency = "DAILY" | "WEEKLY";
 export type ProductType =
   | "MILK"
   | "GHEE"
@@ -251,6 +252,7 @@ export type SaleResponse = {
   saleId: string;
   dispatchDate: string;
   customerType: CustomerType;
+  customerId?: string | null;
   customerName: string;
   productType: ProductType;
   quantity: number;
@@ -275,6 +277,9 @@ export type SaleResponse = {
   totalAmount: number;
   receivedAmount: number;
   pendingAmount: number;
+  subscriptionChargeApplied?: boolean;
+  subscriptionBalanceImpact?: number;
+  customerBalanceAfterSale?: number | null;
   paymentStatus: "UNPAID" | "PARTIAL" | "PAID";
   paymentMode: PaymentMode;
   batchDate?: string | null;
@@ -287,6 +292,7 @@ export type SaleResponse = {
 export type CreateSalePayload = {
   dispatchDate: string;
   customerType: CustomerType;
+  customerId?: string | null;
   customerName: string;
   productType: ProductType;
   quantity: number;
@@ -351,6 +357,10 @@ export type CustomerRecordResponse = {
   collectionPoint?: string | null;
   subscriptionActive: boolean;
   dailySubscriptionQty?: number | null;
+  subscriptionFrequency?: SubscriptionFrequency | null;
+  runningBalance: number;
+  totalPaid: number;
+  lastPayoutDate?: string | null;
   isActive: boolean;
   notes?: string | null;
   createdAt?: string;
@@ -365,11 +375,18 @@ export type CreateCustomerRecordPayload = {
   collectionPoint?: string | null;
   subscriptionActive?: boolean;
   dailySubscriptionQty?: number | null;
+  subscriptionFrequency?: SubscriptionFrequency | null;
   isActive?: boolean;
   notes?: string | null;
 };
 
 export type UpdateCustomerRecordPayload = CreateCustomerRecordPayload;
+
+export type RecordCustomerPayoutPayload = {
+  amount: number;
+  payoutDate?: string | null;
+  note?: string | null;
+};
 
 export type ExpenseResponse = {
   expenseId: string;
@@ -759,6 +776,25 @@ export type UpdateAuthUserPayload = {
   password?: string | null;
 };
 
+export type ResetAuthUserPasswordPayload = {
+  newPassword: string;
+};
+
+export type ChangePasswordPayload = {
+  currentPassword: string;
+  newPassword: string;
+};
+
+export type AuthUserAuditResponse = {
+  auditId: string;
+  actorUsername: string;
+  action: string;
+  targetUserId?: string | null;
+  targetUsername?: string | null;
+  details?: string | null;
+  createdAt: string;
+};
+
 export type LoginPayload = {
   username: string;
   password: string;
@@ -956,6 +992,26 @@ export const AuthApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  deactivateUser: (userId: string) =>
+    http<AuthUserResponse>(`${API_BASE_URL}/api/auth/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    }),
+
+  resetUserPassword: (userId: string, payload: ResetAuthUserPasswordPayload) =>
+    http<AuthUserResponse>(`${API_BASE_URL}/api/auth/users/${encodeURIComponent(userId)}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  changePassword: (payload: ChangePasswordPayload) =>
+    http<void>(`${API_BASE_URL}/api/auth/change-password`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  listUserAudits: (limit = 100) =>
+    http<AuthUserAuditResponse[]>(`${API_BASE_URL}/api/auth/users/audits?limit=${limit}`),
 };
 
 export const ReportApi = {
@@ -1044,6 +1100,12 @@ export const CustomerApi = {
   update: (customerId: string, payload: UpdateCustomerRecordPayload) =>
     http<CustomerRecordResponse>(`${API_BASE_URL}/api/customers/${encodeURIComponent(customerId)}`, {
       method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  recordPayout: (customerId: string, payload: RecordCustomerPayoutPayload) =>
+    http<CustomerRecordResponse>(`${API_BASE_URL}/api/customers/${encodeURIComponent(customerId)}/payout`, {
+      method: "POST",
       body: JSON.stringify(payload),
     }),
 };
