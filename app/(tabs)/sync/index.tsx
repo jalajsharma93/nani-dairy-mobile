@@ -5,6 +5,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { useI18n } from "../../state/i18n";
 import {
   clearAllPendingSyncOperations,
+  clearConflictSyncOperations,
   clearDeadLetterSyncOperations,
   flushPendingSyncOperations,
   getPendingSyncOperations,
@@ -12,12 +13,16 @@ import {
   PendingSyncOperation,
   PendingSyncSummary,
   removePendingSyncOperation,
+  requeueConflictSyncOperations,
   requeueDeadLetterSyncOperations,
 } from "../../utils/offline-sync";
 
-function stateTone(state: "PENDING" | "DEAD_LETTER") {
+function stateTone(state: "PENDING" | "DEAD_LETTER" | "CONFLICT") {
   if (state === "DEAD_LETTER") {
     return { bg: DairyColors.dangerSoft, text: DairyColors.danger };
+  }
+  if (state === "CONFLICT") {
+    return { bg: DairyColors.infoSoft, text: DairyColors.info };
   }
   return { bg: DairyColors.warningSoft, text: DairyColors.warning };
 }
@@ -43,6 +48,7 @@ export default function SyncCenterScreen() {
     feedBulkCreate: 0,
     feedLogUpdate: 0,
     deadLetter: 0,
+    conflict: 0,
   });
   const [rows, setRows] = useState<PendingSyncOperation[]>([]);
 
@@ -92,8 +98,19 @@ export default function SyncCenterScreen() {
     await syncNow();
   };
 
+  const retryConflicts = async () => {
+    await requeueConflictSyncOperations();
+    await load();
+    await syncNow();
+  };
+
   const clearDeadLetters = async () => {
     await clearDeadLetterSyncOperations();
+    await load();
+  };
+
+  const clearConflicts = async () => {
+    await clearConflictSyncOperations();
     await load();
   };
 
@@ -117,6 +134,8 @@ export default function SyncCenterScreen() {
     summary.deliveryAddOn;
   const feedOps = summary.feedBulkCreate + summary.feedLogUpdate;
   const adminOps = summary.expenseSave + summary.treatmentSave + summary.genericTaskStatus;
+  const conflictCount = summary.conflict ?? 0;
+  const pendingCount = summary.total - summary.deadLetter - conflictCount;
 
   return (
     <ScrollView
@@ -157,7 +176,13 @@ export default function SyncCenterScreen() {
         <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}>
           <Text style={{ color: DairyColors.textSecondary }}>{x("Pending", "पेंडिंग")}</Text>
           <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
-            {summary.total - summary.deadLetter}
+            {pendingCount}
+          </Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}>
+          <Text style={{ color: DairyColors.textSecondary }}>{x("Conflict", "कॉनफ्लिक्ट")}</Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
+            {conflictCount}
           </Text>
         </View>
         <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.dangerSoft, padding: 10 }}>
@@ -258,6 +283,20 @@ export default function SyncCenterScreen() {
         </Pressable>
 
         <Pressable
+          onPress={() => void retryConflicts()}
+          style={{
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.info,
+            backgroundColor: DairyColors.infoSoft,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+          }}
+        >
+          <Text style={{ color: DairyColors.info, fontWeight: "800" }}>{x("Retry Conflicts", "कॉनफ्लिक्ट रीट्राई")}</Text>
+        </Pressable>
+
+        <Pressable
           onPress={() => void clearDeadLetters()}
           style={{
             borderRadius: 10,
@@ -269,6 +308,20 @@ export default function SyncCenterScreen() {
           }}
         >
           <Text style={{ color: DairyColors.danger, fontWeight: "800" }}>{x("Clear Dead Letter", "डेड लेटर हटाएं")}</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => void clearConflicts()}
+          style={{
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.info,
+            backgroundColor: DairyColors.surface,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+          }}
+        >
+          <Text style={{ color: DairyColors.info, fontWeight: "800" }}>{x("Clear Conflicts", "कॉनफ्लिक्ट हटाएं")}</Text>
         </Pressable>
 
         <Pressable
@@ -320,6 +373,14 @@ export default function SyncCenterScreen() {
                 </Text>
                 {row.lastError ? (
                   <Text style={{ marginTop: 2, color: DairyColors.danger }}>{row.lastError}</Text>
+                ) : null}
+                {row.state === "CONFLICT" ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.info }}>
+                    {x(
+                      "This entry hit a version conflict and needs retry/resolve.",
+                      "इस एंट्री में वर्ज़न कॉनफ्लिक्ट है, इसे रीट्राई/रिज़ॉल्व करें।"
+                    )}
+                  </Text>
                 ) : null}
 
                 <Pressable

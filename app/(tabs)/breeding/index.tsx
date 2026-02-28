@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
@@ -92,6 +92,7 @@ function animalDisplayLabel(animal: AnimalResponse) {
 
 export default function BreedingScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
+  const router = useRouter();
   const { x } = useI18n();
   const { hasAnyRole } = useAuth();
   const canManageBreeding = hasAnyRole("ADMIN", "MANAGER", "VET");
@@ -544,6 +545,73 @@ export default function BreedingScreen() {
         >
           <Ionicons name={loading ? "sync-circle" : "refresh"} size={20} color={DairyColors.primary} />
         </Pressable>
+      </View>
+
+      <View
+        style={{
+          marginTop: 12,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 14,
+          backgroundColor: DairyColors.surface,
+          padding: 12,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Related Links", "संबंधित लिंक")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            "Jump to vaccination/deworming and medical treatment for this animal.",
+            "इस जानवर के टीका/पेट दवा और मेडिकल ट्रीटमेंट स्क्रीन पर जाएं।"
+          )}
+        </Text>
+        <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Pressable
+            disabled={!selectedAnimal}
+            onPress={() =>
+              selectedAnimal &&
+              router.push({
+                pathname: "/health",
+                params: { animalId: selectedAnimal.animalId, tag: selectedAnimal.tag },
+              })
+            }
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.info,
+              backgroundColor: DairyColors.infoSoft,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: DairyColors.info, fontWeight: "800" }}>
+              {x("Animal Health", "एनिमल हेल्थ")}
+            </Text>
+          </Pressable>
+          <Pressable
+            disabled={!selectedAnimal}
+            onPress={() =>
+              selectedAnimal &&
+              router.push({
+                pathname: "/treatments",
+                params: { animalId: selectedAnimal.animalId, tag: selectedAnimal.tag },
+              })
+            }
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.warning,
+              backgroundColor: DairyColors.warningSoft,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: DairyColors.warning, fontWeight: "800" }}>
+              {x("Medical Treatment", "मेडिकल ट्रीटमेंट")}
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>

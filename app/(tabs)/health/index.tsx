@@ -8,8 +8,6 @@ import {
   CreateDewormingPayload,
   CreateVaccinationPayload,
   DewormingResponse,
-  FeedApi,
-  FeedLogResponse,
   HealthApi,
   HealthSummaryResponse,
   MilkEntryApi,
@@ -41,7 +39,7 @@ type TimelineEvent = {
   date: string;
   title: string;
   subtitle: string;
-  kind: "VACCINATION" | "DEWORMING" | "FEED" | "MILK";
+  kind: "VACCINATION" | "DEWORMING" | "MILK";
 };
 
 const DUE_FILTERS: DueFilter[] = ["ALL", "DUE_TODAY", "DUE_SOON", "OVERDUE"];
@@ -186,9 +184,6 @@ function timelineTone(kind: TimelineEvent["kind"]) {
   if (kind === "DEWORMING") {
     return { text: DairyColors.warning, background: DairyColors.warningSoft };
   }
-  if (kind === "FEED") {
-    return { text: DairyColors.success, background: DairyColors.successSoft };
-  }
   return { text: DairyColors.primary, background: DairyColors.primarySoft };
 }
 
@@ -238,12 +233,21 @@ function autoNextDueDate(vaccineKey: VaccineKey, doseDate: string) {
   return addDaysIso(doseDate, option.nextShotDays);
 }
 
+function resolvedVaccinationNextDue(row: Pick<VaccinationResponse, "vaccineName" | "doseDate" | "nextDueDate">) {
+  if (row.nextDueDate) {
+    return row.nextDueDate;
+  }
+  const key = vaccineKeyFromName(row.vaccineName ?? "");
+  return autoNextDueDate(key, row.doseDate) ?? null;
+}
+
 export default function HealthScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
   const router = useRouter();
   const { hasAnyRole, user } = useAuth();
   const { x, language } = useI18n();
   const canManageHealth = hasAnyRole("ADMIN", "MANAGER", "VET");
+  const canOpenFeedLog = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
   const isVetRole = user?.role === "VET";
 
   const [tab, setTab] = useState<HealthTab>("VACCINATION");
@@ -257,7 +261,6 @@ export default function HealthScreen() {
 
   const [vaccinations, setVaccinations] = useState<VaccinationResponse[]>([]);
   const [deworming, setDeworming] = useState<DewormingResponse[]>([]);
-  const [feedLogs, setFeedLogs] = useState<FeedLogResponse[]>([]);
   const [milkEntries, setMilkEntries] = useState<MilkEntryResponse[]>([]);
 
   const [loading, setLoading] = useState(false);
@@ -344,7 +347,6 @@ export default function HealthScreen() {
   const timelineKindLabel = (kind: TimelineEvent["kind"]) => {
     if (kind === "VACCINATION") return x("VACCINATION", "टीका");
     if (kind === "DEWORMING") return x("DEWORMING", "पेट दवा");
-    if (kind === "FEED") return x("FEED", "चारा");
     return x("MILK", "दूध");
   };
 
@@ -402,22 +404,19 @@ export default function HealthScreen() {
       if (!animalId) {
         setVaccinations([]);
         setDeworming([]);
-        setFeedLogs([]);
         setMilkEntries([]);
         return;
       }
 
       const dateFrom = shiftIsoDate(date, -30);
-      const [vaccinationRows, dewormingRows, feedRows, milkRows] = await Promise.all([
+      const [vaccinationRows, dewormingRows, milkRows] = await Promise.all([
         HealthApi.listVaccinations(animalId),
         HealthApi.listDeworming(animalId),
-        isVetRole ? Promise.resolve([]) : FeedApi.list({ animalId }),
         isVetRole ? Promise.resolve([]) : MilkEntryApi.historyByAnimal(animalId, dateFrom, date),
       ]);
 
       setVaccinations(vaccinationRows);
       setDeworming(dewormingRows);
-      setFeedLogs(feedRows);
       setMilkEntries(milkRows);
     },
     [date, isVetRole]
@@ -570,12 +569,17 @@ export default function HealthScreen() {
       return;
     }
 
+    const normalizedNextDueDate =
+      nextDueDate ||
+      autoNextDueDate(vaccineKeyFromName(vaccineName), doseDate) ||
+      null;
+
     const payload: CreateVaccinationPayload = {
       vaccineName: vaccineName.trim(),
       diseaseTarget: diseaseTarget.trim(),
       doseDate,
       doseNumber,
-      nextDueDate: nextDueDate || null,
+      nextDueDate: normalizedNextDueDate,
       boosterDueDate: boosterDueDate || null,
       vaccineExpiryDate: expiryDate || null,
       batchLotNo: vBatchLotNo.trim() || null,
@@ -697,12 +701,14 @@ export default function HealthScreen() {
     }
     setTab("VACCINATION");
     setEditingVaccinationId(row.vaccinationId);
-    setSelectedVaccineKey(vaccineKeyFromName(row.vaccineName));
+    const key = vaccineKeyFromName(row.vaccineName);
+    const computedNextDue = resolvedVaccinationNextDue(row);
+    setSelectedVaccineKey(key);
     setVaccineName(row.vaccineName);
     setDiseaseTarget(row.diseaseTarget);
     setVDoseDate(row.doseDate);
-    setNextDueAuto(false);
-    setVNextDueDate(row.nextDueDate ?? "");
+    setNextDueAuto(!row.nextDueDate && !!computedNextDue);
+    setVNextDueDate(computedNextDue ?? "");
     setVBoosterDueDate(row.boosterDueDate ?? "");
     setVaccineExpiryDate(row.vaccineExpiryDate ?? "");
     setVDoseNumber(row.doseNumber == null ? "" : String(row.doseNumber));
@@ -791,7 +797,7 @@ export default function HealthScreen() {
     if (dueFilter === "ALL") {
       return vaccinations;
     }
-    return vaccinations.filter((row) => classifyDue(row.nextDueDate, date) === dueFilter);
+    return vaccinations.filter((row) => classifyDue(resolvedVaccinationNextDue(row), date) === dueFilter);
   }, [vaccinations, dueFilter, date]);
 
   const filteredDeworming = useMemo(() => {
@@ -805,14 +811,15 @@ export default function HealthScreen() {
     const rows: TimelineEvent[] = [];
 
     vaccinations.forEach((row) => {
+      const nextDue = resolvedVaccinationNextDue(row);
       rows.push({
         id: `VAC_${row.vaccinationId}`,
         date: row.doseDate,
         kind: "VACCINATION",
         title: `${row.vaccineName} (${row.diseaseTarget})`,
         subtitle: x(
-          `Dose ${row.doseNumber ?? "-"} | Next due ${row.nextDueDate ?? "-"}`,
-          `डोज ${row.doseNumber ?? "-"} | अगली तारीख ${row.nextDueDate ?? "-"}`
+          `Dose ${row.doseNumber ?? "-"} | Next due ${nextDue ?? "-"}`,
+          `डोज ${row.doseNumber ?? "-"} | अगली तारीख ${nextDue ?? "-"}`
         ),
       });
     });
@@ -831,16 +838,6 @@ export default function HealthScreen() {
     });
 
     if (!isVetRole) {
-      feedLogs.forEach((row) => {
-        rows.push({
-          id: `FEED_${row.feedLogId}`,
-          date: row.feedDate,
-          kind: "FEED",
-          title: `${row.feedType} (${row.quantityKg.toFixed(2)} kg)`,
-          subtitle: row.notes ? x(`Feed note: ${row.notes}`, `चारा नोट: ${row.notes}`) : x("Feed record", "चारा रिकॉर्ड"),
-        });
-      });
-
       milkEntries.forEach((row) => {
         rows.push({
           id: `MILK_${row.milkEntryId}`,
@@ -853,7 +850,7 @@ export default function HealthScreen() {
     }
 
     return sortDescByDate(rows).slice(0, 30);
-  }, [vaccinations, deworming, feedLogs, milkEntries, isVetRole, x]);
+  }, [vaccinations, deworming, milkEntries, isVetRole, x]);
 
   const sectionCard = {
     marginTop: 14,
@@ -937,6 +934,135 @@ export default function HealthScreen() {
             </Text>
           </View>
         </View>
+      </View>
+
+      <View style={sectionCard}>
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Related Records", "संबंधित रिकॉर्ड")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            "Open breeding, treatment, feed log, and animal profile from here.",
+            "यहीं से प्रजनन, ट्रीटमेंट, फीड लॉग और जानवर प्रोफाइल खोलें।"
+          )}
+        </Text>
+        <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Pressable
+            disabled={!selectedAnimal}
+            onPress={() =>
+              selectedAnimal &&
+              router.push({
+                pathname: "/animals/[animalId]",
+                params: { animalId: selectedAnimal.animalId },
+              })
+            }
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              backgroundColor: DairyColors.surfaceMuted,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+              {x("Animal Log", "जानवर लॉग")}
+            </Text>
+          </Pressable>
+          {canOpenFeedLog ? (
+            <Pressable
+              disabled={!selectedAnimal}
+              onPress={() =>
+                selectedAnimal &&
+                router.push({
+                  pathname: "/feed",
+                  params: { animalId: selectedAnimal.animalId, tag: selectedAnimal.tag },
+                })
+              }
+              style={{
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: DairyColors.success,
+                backgroundColor: DairyColors.successSoft,
+                paddingHorizontal: 12,
+                paddingVertical: 9,
+              }}
+            >
+              <Text style={{ color: DairyColors.success, fontWeight: "800" }}>
+                {x("Feed Log", "फीड लॉग")}
+              </Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            disabled={!selectedAnimal}
+            onPress={() =>
+              selectedAnimal &&
+              router.push({
+                pathname: "/breeding",
+                params: { animalId: selectedAnimal.animalId, tag: selectedAnimal.tag },
+              })
+            }
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.info,
+              backgroundColor: DairyColors.infoSoft,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: DairyColors.info, fontWeight: "800" }}>
+              {x("Breeding", "प्रजनन")}
+            </Text>
+          </Pressable>
+          <Pressable
+            disabled={!selectedAnimal}
+            onPress={() =>
+              selectedAnimal &&
+              router.push({
+                pathname: "/treatments",
+                params: { animalId: selectedAnimal.animalId, tag: selectedAnimal.tag },
+              })
+            }
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.warning,
+              backgroundColor: DairyColors.warningSoft,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: DairyColors.warning, fontWeight: "800" }}>
+              {x("Medical Treatment", "मेडिकल ट्रीटमेंट")}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={sectionCard}>
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Daily Animal Check (SOP)", "रोज़ाना जानवर जांच (SOP)")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            "Check these once daily for every animal. Mark as attention if any change from normal.",
+            "हर जानवर के लिए रोज़ एक बार यह जांचें। सामान्य से बदलाव हो तो ध्यान में लें।"
+          )}
+        </Text>
+        {[
+          x("Feed and water intake (drop from normal)", "खाना और पानी की खपत (सामान्य से कमी)"),
+          x("Rumination/cud chewing and general alertness", "जुगाली और सामान्य सक्रियता"),
+          x("Milk yield and udder/milk abnormalities", "दूध उत्पादन और थन/दूध में असामान्यता"),
+          x("Temperature, cough, nasal/eye discharge", "तापमान, खांसी, नाक/आंख से स्राव"),
+          x("Dung/urine consistency and frequency", "गोबर/मूत्र की स्थिति और बारंबारता"),
+          x("Gait/lameness, hoof and leg condition", "चलना/लंगड़ापन, खुर और पैर की स्थिति"),
+          x("Heat signs, pregnancy and calving milestones", "हीट संकेत, गर्भावस्था और बछड़ा चरण"),
+        ].map((item, index) => (
+          <Text key={`daily-check-${index}`} style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+            {`\u2022 ${item}`}
+          </Text>
+        ))}
       </View>
 
       {isVetRole ? (
@@ -1548,17 +1674,41 @@ export default function HealthScreen() {
           ))}
         </View>
 
+        {tab === "VACCINATION" && vaccinations.length === 0 ? (
+          <View
+            style={{
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: DairyColors.warning,
+              borderRadius: 10,
+              backgroundColor: DairyColors.warningSoft,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.warning, fontWeight: "800" }}>
+              {x("No vaccination records yet", "अभी तक टीकाकरण रिकॉर्ड नहीं है")}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                "Treat this animal as due today and add the first vaccine entry.",
+                "इस जानवर को आज देय मानें और पहला टीका रिकॉर्ड जोड़ें।"
+              )}
+            </Text>
+          </View>
+        ) : null}
+
         {tab === "VACCINATION" ? (
           filteredVaccinations.length === 0 ? (
             <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
               {x("No vaccination records for filter.", "इस फिल्टर में कोई टीका रिकॉर्ड नहीं है।")}
             </Text>
-          ) : (
-            filteredVaccinations.map((row) => {
-              const due = dueTone(classifyDue(row.nextDueDate, date));
-              return (
-                <View
-                  key={row.vaccinationId}
+        ) : (
+          filteredVaccinations.map((row) => {
+            const nextDue = resolvedVaccinationNextDue(row);
+            const due = dueTone(classifyDue(nextDue, date));
+            return (
+              <View
+                key={row.vaccinationId}
                   style={{
                     marginTop: 8,
                     borderWidth: 1,
@@ -1588,8 +1738,8 @@ export default function HealthScreen() {
                   </Text>
                   <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                     {x(
-                      `Next Due: ${row.nextDueDate ?? "-"} | Booster: ${row.boosterDueDate ?? "-"}`,
-                      `अगली तारीख: ${row.nextDueDate ?? "-"} | बूस्टर: ${row.boosterDueDate ?? "-"}`
+                      `Next Due: ${nextDue ?? "-"} | Booster: ${row.boosterDueDate ?? "-"}`,
+                      `अगली तारीख: ${nextDue ?? "-"} | बूस्टर: ${row.boosterDueDate ?? "-"}`
                     )}
                   </Text>
                   <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
@@ -1715,7 +1865,7 @@ export default function HealthScreen() {
         <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
           {isVetRole
             ? x("Last 30 days: vaccination and deworming", "पिछले 30 दिन: टीका और पेट दवा")
-            : x("Last 30 days: milk, feed, vaccination, and deworming", "पिछले 30 दिन: दूध, चारा, टीका और पेट दवा")}
+            : x("Last 30 days: milk, vaccination, and deworming", "पिछले 30 दिन: दूध, टीका और पेट दवा")}
         </Text>
 
         {timeline.length === 0 ? (

@@ -254,6 +254,30 @@ export default function CustomersScreen() {
 
     try {
       setPlannerSaving(true);
+      let lifecycleUpdated = false;
+      if (plannerCustomer) {
+        const shouldActivateSubscription = !plannerCustomer.subscriptionActive;
+        const shouldSetDailyQty = (plannerCustomer.dailySubscriptionQty ?? 0) <= 0;
+        const shouldSetDefaultPrice = (plannerCustomer.defaultMilkUnitPrice ?? 0) <= 0;
+        if (shouldActivateSubscription || shouldSetDailyQty || shouldSetDefaultPrice) {
+          const customerPayload = buildCustomerUpdatePayload(plannerCustomer, {
+            subscriptionActive: true,
+          });
+          customerPayload.subscriptionActive = true;
+          if ((customerPayload.dailySubscriptionQty ?? 0) <= 0) {
+            customerPayload.dailySubscriptionQty = qty;
+          }
+          if (!customerPayload.subscriptionFrequency) {
+            customerPayload.subscriptionFrequency = "DAILY";
+          }
+          if ((customerPayload.defaultMilkUnitPrice ?? 0) <= 0) {
+            customerPayload.defaultMilkUnitPrice = unitPrice;
+          }
+          await CustomerApi.update(plannerCustomer.customerId, customerPayload);
+          lifecycleUpdated = true;
+        }
+      }
+
       if (editingLineId) {
         const payload: UpdateCustomerSubscriptionLinePayload = {
           ...payloadBase,
@@ -267,13 +291,21 @@ export default function CustomersScreen() {
         };
         await CustomerApi.createSubscriptionLine(plannerCustomerId, payload);
       }
+      if (lifecycleUpdated) {
+        await loadCustomers();
+      }
       await loadSubscriptionLines();
       resetSubscriptionLineForm();
       Alert.alert(
         x("Saved", "सेव हो गया"),
-        editingLineId
-          ? x("Subscription line updated.", "सब्सक्रिप्शन लाइन अपडेट हो गई।")
-          : x("Subscription line added.", "सब्सक्रिप्शन लाइन जोड़ दी गई।")
+        lifecycleUpdated
+          ? x(
+              "Subscription line saved. Customer subscription was auto-activated and defaults were filled.",
+              "सब्सक्रिप्शन लाइन सेव हुई। ग्राहक सब्सक्रिप्शन ऑटो-एक्टिव हुआ और डिफ़ॉल्ट मान भर दिए गए।"
+            )
+          : editingLineId
+            ? x("Subscription line updated.", "सब्सक्रिप्शन लाइन अपडेट हो गई।")
+            : x("Subscription line added.", "सब्सक्रिप्शन लाइन जोड़ दी गई।")
       );
     } catch (e: any) {
       console.error(e);

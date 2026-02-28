@@ -69,6 +69,23 @@ function confidenceTone(level: AnimalProfitabilityEstimate["confidence"]) {
   return { text: DairyColors.danger, background: DairyColors.dangerSoft };
 }
 
+function resolvedVaccinationNextDueDate(row: Pick<VaccinationResponse, "vaccineName" | "doseDate" | "nextDueDate">) {
+  if (row.nextDueDate) {
+    return row.nextDueDate;
+  }
+  const vaccine = normalizeRef(row.vaccineName);
+  if (!row.doseDate) {
+    return null;
+  }
+  if (vaccine === "fmd") {
+    return shiftIsoDate(row.doseDate, 180);
+  }
+  if (vaccine === "hs" || vaccine === "bq" || vaccine === "anthrax" || vaccine === "lsd") {
+    return shiftIsoDate(row.doseDate, 365);
+  }
+  return null;
+}
+
 export default function AnimalDetailsScreen() {
   const router = useRouter();
   const { animalId } = useLocalSearchParams<{ animalId?: string }>();
@@ -297,8 +314,8 @@ export default function AnimalDetailsScreen() {
     const isOverdue = (d?: string | null) => !!d && d < today;
 
     return {
-      vaccSoon: vaccinations.filter((v) => isSoon(v.nextDueDate)).length,
-      vaccOverdue: vaccinations.filter((v) => isOverdue(v.nextDueDate)).length,
+      vaccSoon: vaccinations.filter((v) => isSoon(resolvedVaccinationNextDueDate(v))).length,
+      vaccOverdue: vaccinations.filter((v) => isOverdue(resolvedVaccinationNextDueDate(v))).length,
       dewormSoon: deworming.filter((d) => isSoon(d.nextDueDate)).length,
       dewormOverdue: deworming.filter((d) => isOverdue(d.nextDueDate)).length,
       treatmentFollowUpSoon: treatments.filter((row) => isSoon(row.followUpDate)).length,

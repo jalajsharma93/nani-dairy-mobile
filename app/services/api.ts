@@ -44,6 +44,7 @@ export type EmployeeGovernmentIdType =
   | "DRIVING_LICENSE"
   | "PASSPORT"
   | "OTHER";
+export type AttendanceStatus = "PRESENT" | "ABSENT";
 export type UserRole = "ADMIN" | "MANAGER" | "WORKER" | "FEED_MANAGER" | "DELIVERY" | "VET";
 export type FeedRationPhase = "LACTATING" | "PREGNANT" | "DRY" | "CALF" | "SICK_RECOVERY";
 export type FeedMaterialCategory =
@@ -166,6 +167,33 @@ export type CreateEmployeePayload = {
   isActive: boolean;
 };
 export type UpdateEmployeePayload = CreateEmployeePayload;
+
+export type EmployeeAttendanceResponse = {
+  attendanceId: string;
+  employeeId: string;
+  employeeName?: string | null;
+  attendanceDate: string;
+  shift: Shift;
+  status: AttendanceStatus;
+  hoursWorked?: number | null;
+  notes?: string | null;
+  markedByUsername?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type UpsertEmployeeAttendancePayload = {
+  employeeId: string;
+  attendanceDate: string;
+  shift: Shift;
+  status: AttendanceStatus;
+  hoursWorked?: number | null;
+  notes?: string | null;
+};
+
+export type BulkUpsertEmployeeAttendancePayload = {
+  entries: UpsertEmployeeAttendancePayload[];
+};
 
 export type SeedMvpResponse = {
   animalsAdded: number;
@@ -1333,6 +1361,47 @@ export const EmployeeApi = {
   update: (employeeId: string, payload: UpdateEmployeePayload) =>
     http<EmployeeResponse>(`${API_BASE_URL}/api/employees/${employeeId}`, {
       method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  listAttendance: (params?: {
+    date?: string;
+    shift?: Shift;
+    employeeId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.date) {
+      search.set("date", params.date);
+    }
+    if (params?.shift) {
+      search.set("shift", params.shift);
+    }
+    if (params?.employeeId) {
+      search.set("employeeId", params.employeeId);
+    }
+    if (params?.dateFrom) {
+      search.set("dateFrom", params.dateFrom);
+    }
+    if (params?.dateTo) {
+      search.set("dateTo", params.dateTo);
+    }
+    const query = search.toString();
+    return http<EmployeeAttendanceResponse[]>(
+      `${API_BASE_URL}/api/employees/attendance${query ? `?${query}` : ""}`
+    );
+  },
+
+  upsertAttendance: (payload: UpsertEmployeeAttendancePayload) =>
+    http<EmployeeAttendanceResponse>(`${API_BASE_URL}/api/employees/attendance`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  bulkUpsertAttendance: (payload: BulkUpsertEmployeeAttendancePayload) =>
+    http<EmployeeAttendanceResponse[]>(`${API_BASE_URL}/api/employees/attendance/bulk`, {
+      method: "POST",
       body: JSON.stringify(payload),
     }),
 };

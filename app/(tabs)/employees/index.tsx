@@ -2,12 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Switch, Text, TextInput, View } from "react-native";
 import {
+  AttendanceStatus,
   EmployeeApi,
   EmployeeGovernmentIdType,
   EmployeeResponse,
   EmployeeType,
   ExpenseApi,
   PaymentMode,
+  Shift,
 } from "../../services/api";
 import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
@@ -24,6 +26,14 @@ const GOVT_ID_OPTIONS: EmployeeGovernmentIdType[] = [
   "OTHER",
 ];
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "CREDIT"];
+const ATTENDANCE_SHIFTS: Shift[] = ["AM", "PM"];
+
+type AttendanceDraft = {
+  status: AttendanceStatus;
+  hoursWorked: string;
+  notes: string;
+  dirty: boolean;
+};
 
 function employeeTypeTone(type: EmployeeType) {
   if (type === "FULL_TIME") {
@@ -59,13 +69,40 @@ function maskLast3(value?: string | null) {
   return `${"*".repeat(cleaned.length - 3)}${cleaned.slice(-3)}`;
 }
 
+function defaultAttendanceDraft(employee: EmployeeResponse): AttendanceDraft {
+  return {
+    status: "PRESENT",
+    hoursWorked: employee.type === "PART_TIME" ? "4" : "8",
+    notes: "",
+    dirty: false,
+  };
+}
+
+function normalizeHoursForAttendance(status: AttendanceStatus, value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 24) {
+    throw new Error("Hours worked must be between 0 and 24.");
+  }
+  if (status === "PRESENT" && parsed <= 0) {
+    throw new Error("Present attendance requires hours greater than 0.");
+  }
+  return parsed;
+}
+
 export default function EmployeesScreen() {
   const { hasAnyRole } = useAuth();
   const { x, label } = useI18n();
   const canManageEmployees = hasAnyRole("ADMIN");
+  const canManageAttendance = hasAnyRole("ADMIN", "MANAGER");
 
   const [employees, setEmployees] = useState<EmployeeResponse[]>([]);
   const [loading, setLoading] = useState(false);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceSavingAll, setAttendanceSavingAll] = useState(false);
+  const [attendanceSavingEmployeeId, setAttendanceSavingEmployeeId] = useState<string | null>(null);
+  const [attendanceDate, setAttendanceDate] = useState(todayLocalISO());
+  const [attendanceShift, setAttendanceShift] = useState<Shift>("AM");
+  const [attendanceByEmployeeId, setAttendanceByEmployeeId] = useState<Record<string, AttendanceDraft>>({});
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
@@ -104,6 +141,75 @@ export default function EmployeesScreen() {
 
   const paymentModeLabel = (mode: PaymentMode) => label("paymentMode", mode);
 
+  const activeEmployees = useMemo(() => employees.filter((employee) => employee.isActive), [employees]);
+
+  const attendanceDraftFor = useCallback(
+    (employee: EmployeeResponse): AttendanceDraft => {
+      return attendanceByEmployeeId[employee.employeeId] ?? defaultAttendanceDraft(employee);
+    },
+    [attendanceByEmployeeId]
+  );
+
+  const setAttendanceDraft = useCallback((employee: EmployeeResponse, patch: Partial<AttendanceDraft>) => {
+    setAttendanceByEmployeeId((prev) => {
+      const current = prev[employee.employeeId] ?? defaultAttendanceDraft(employee);
+      return {
+        ...prev,
+        [employee.employeeId]: {
+          ...current,
+          ...patch,
+          dirty: true,
+        },
+      };
+    });
+  }, []);
+
+  const loadAttendance = useCallback(
+    async (targetDate = attendanceDate, targetShift = attendanceShift) => {
+      if (!canManageAttendance) {
+        setAttendanceByEmployeeId({});
+        return;
+      }
+      try {
+        setAttendanceLoading(true);
+        const rows = await EmployeeApi.listAttendance({
+          date: targetDate,
+          shift: targetShift,
+        });
+        const rowByEmployeeId = new Map(rows.map((row) => [row.employeeId, row]));
+        const next: Record<string, AttendanceDraft> = {};
+        activeEmployees.forEach((employee) => {
+          const existing = rowByEmployeeId.get(employee.employeeId);
+          if (!existing) {
+            next[employee.employeeId] = defaultAttendanceDraft(employee);
+            return;
+          }
+          next[employee.employeeId] = {
+            status: existing.status,
+            hoursWorked:
+              existing.hoursWorked !== null && existing.hoursWorked !== undefined
+                ? String(existing.hoursWorked)
+                : existing.status === "ABSENT"
+                  ? "0"
+                  : defaultAttendanceDraft(employee).hoursWorked,
+            notes: existing.notes ?? "",
+            dirty: false,
+          };
+        });
+        setAttendanceByEmployeeId(next);
+      } catch (e: any) {
+        console.error(e);
+        Alert.alert(
+          x("Load failed", "लोड नहीं हुआ"),
+          e?.message ?? x("Could not load attendance records.", "उपस्थिति रिकॉर्ड लोड नहीं हो पाए।")
+        );
+      } finally {
+        setAttendanceLoading(false);
+      }
+    },
+    [activeEmployees, attendanceDate, attendanceShift, canManageAttendance, x]
+  );
+
   const loadEmployees = useCallback(async () => {
     try {
       setLoading(true);
@@ -122,6 +228,14 @@ export default function EmployeesScreen() {
   useEffect(() => {
     loadEmployees();
   }, [loadEmployees]);
+
+  useEffect(() => {
+    if (!canManageAttendance) {
+      setAttendanceByEmployeeId({});
+      return;
+    }
+    loadAttendance(attendanceDate, attendanceShift);
+  }, [attendanceDate, attendanceShift, canManageAttendance, loadAttendance, activeEmployees.length]);
 
   const resetForm = () => {
     setEditingEmployeeId(null);
@@ -406,6 +520,135 @@ export default function EmployeesScreen() {
     }
   };
 
+  const saveAttendanceForEmployee = async (employee: EmployeeResponse) => {
+    if (!canManageAttendance) {
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate.trim())) {
+      Alert.alert(
+        x("Invalid date", "गलत तारीख"),
+        x("Attendance date must be in YYYY-MM-DD format.", "उपस्थिति तारीख YYYY-MM-DD में डालें।")
+      );
+      return;
+    }
+    const draft = attendanceDraftFor(employee);
+    const normalizedNotes = normalizeOptionalInput(draft.notes);
+    let normalizedHours: number;
+    try {
+      normalizedHours = normalizeHoursForAttendance(draft.status, draft.hoursWorked);
+    } catch (error: any) {
+      Alert.alert(x("Invalid hours", "घंटे गलत हैं"), x(error?.message ?? "Hours are invalid.", "घंटे गलत हैं।"));
+      return;
+    }
+
+    try {
+      setAttendanceSavingEmployeeId(employee.employeeId);
+      const saved = await EmployeeApi.upsertAttendance({
+        employeeId: employee.employeeId,
+        attendanceDate: attendanceDate.trim(),
+        shift: attendanceShift,
+        status: draft.status,
+        hoursWorked: normalizedHours,
+        notes: normalizedNotes,
+      });
+      setAttendanceByEmployeeId((prev) => ({
+        ...prev,
+        [employee.employeeId]: {
+          status: saved.status,
+          hoursWorked:
+            saved.hoursWorked !== null && saved.hoursWorked !== undefined
+              ? String(saved.hoursWorked)
+              : saved.status === "ABSENT"
+                ? "0"
+                : defaultAttendanceDraft(employee).hoursWorked,
+          notes: saved.notes ?? "",
+          dirty: false,
+        },
+      }));
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Save failed", "सेव नहीं हुआ"),
+        e?.message ?? x("Could not save attendance.", "उपस्थिति सेव नहीं हो पाई।")
+      );
+    } finally {
+      setAttendanceSavingEmployeeId(null);
+    }
+  };
+
+  const saveAttendanceForAll = async () => {
+    if (!canManageAttendance) {
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate.trim())) {
+      Alert.alert(
+        x("Invalid date", "गलत तारीख"),
+        x("Attendance date must be in YYYY-MM-DD format.", "उपस्थिति तारीख YYYY-MM-DD में डालें।")
+      );
+      return;
+    }
+    if (!activeEmployees.length) {
+      Alert.alert(
+        x("No active employees", "कोई सक्रिय कर्मचारी नहीं"),
+        x("Add active employees before marking attendance.", "उपस्थिति दर्ज करने से पहले सक्रिय कर्मचारी जोड़ें।")
+      );
+      return;
+    }
+
+    try {
+      const entries = activeEmployees.map((employee) => {
+        const draft = attendanceDraftFor(employee);
+        const normalizedHours = normalizeHoursForAttendance(draft.status, draft.hoursWorked);
+        return {
+          employeeId: employee.employeeId,
+          attendanceDate: attendanceDate.trim(),
+          shift: attendanceShift,
+          status: draft.status,
+          hoursWorked: normalizedHours,
+          notes: normalizeOptionalInput(draft.notes),
+        };
+      });
+
+      setAttendanceSavingAll(true);
+      const saved = await EmployeeApi.bulkUpsertAttendance({ entries });
+      const savedByEmployeeId = new Map(saved.map((row) => [row.employeeId, row]));
+      setAttendanceByEmployeeId((prev) => {
+        const next: Record<string, AttendanceDraft> = { ...prev };
+        activeEmployees.forEach((employee) => {
+          const existing = savedByEmployeeId.get(employee.employeeId);
+          if (!existing) {
+            next[employee.employeeId] = {
+              ...attendanceDraftFor(employee),
+              dirty: false,
+            };
+            return;
+          }
+          next[employee.employeeId] = {
+            status: existing.status,
+            hoursWorked:
+              existing.hoursWorked !== null && existing.hoursWorked !== undefined
+                ? String(existing.hoursWorked)
+                : existing.status === "ABSENT"
+                  ? "0"
+                  : defaultAttendanceDraft(employee).hoursWorked,
+            notes: existing.notes ?? "",
+            dirty: false,
+          };
+        });
+        return next;
+      });
+      Alert.alert(x("Attendance saved", "उपस्थिति सेव हो गई"), x("Saved for all active employees.", "सभी सक्रिय कर्मचारियों की उपस्थिति सेव हो गई।"));
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Save failed", "सेव नहीं हुआ"),
+        e?.message ?? x("Could not save attendance for all employees.", "सभी कर्मचारियों की उपस्थिति सेव नहीं हो पाई।")
+      );
+    } finally {
+      setAttendanceSavingAll(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
@@ -474,6 +717,97 @@ export default function EmployeesScreen() {
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.active}</Text>
               </View>
             </View>
+
+            {canManageAttendance ? (
+              <View
+                style={{
+                  marginTop: 14,
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  borderRadius: 14,
+                  padding: 14,
+                  backgroundColor: DairyColors.surface,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
+                  {x("Attendance", "उपस्थिति")}
+                </Text>
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x("Mark present/absent, shift and hours worked.", "हाजिरी, शिफ्ट और काम के घंटे दर्ज करें।")}
+                </Text>
+
+                <View style={{ marginTop: 10, flexDirection: "row", gap: 8, alignItems: "center" }}>
+                  <TextInput
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 11,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surfaceMuted,
+                    }}
+                    placeholder={x("Attendance date (YYYY-MM-DD)", "उपस्थिति तारीख (YYYY-MM-DD)")}
+                    placeholderTextColor="#99A99A"
+                    value={attendanceDate}
+                    onChangeText={setAttendanceDate}
+                  />
+                  <Pressable
+                    onPress={() => loadAttendance(attendanceDate, attendanceShift)}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 11,
+                      backgroundColor: DairyColors.surfaceMuted,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                      {attendanceLoading ? x("Loading...", "लोड...") : x("Reload", "रीलोड")}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <View style={{ marginTop: 10, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                  {ATTENDANCE_SHIFTS.map((shiftOption) => {
+                    const selected = attendanceShift === shiftOption;
+                    return (
+                      <Pressable
+                        key={shiftOption}
+                        onPress={() => setAttendanceShift(shiftOption)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: selected ? DairyColors.primary : DairyColors.border,
+                          backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                          borderRadius: 999,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{shiftOption}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <Pressable
+                  disabled={attendanceSavingAll}
+                  onPress={saveAttendanceForAll}
+                  style={{
+                    marginTop: 10,
+                    padding: 12,
+                    borderRadius: 10,
+                    backgroundColor: attendanceSavingAll ? DairyColors.textSecondary : DairyColors.primary,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: "white", fontWeight: "800" }}>
+                    {attendanceSavingAll ? x("Saving...", "सेव हो रहा है...") : x("Save Attendance (All Active)", "उपस्थिति सेव करें (सभी सक्रिय)")}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {salaryEmployee ? (
               <View
@@ -967,6 +1301,7 @@ export default function EmployeesScreen() {
         }
         renderItem={({ item }) => {
           const tone = employeeTypeTone(item.type);
+          const attendanceDraft = attendanceDraftFor(item);
           return (
             <View
               style={{
@@ -1032,6 +1367,107 @@ export default function EmployeesScreen() {
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x("ESIC", "ESIC")}: {maskLast3(item.esicIpNumber)}
                 </Text>
+              ) : null}
+
+              {canManageAttendance && item.isActive ? (
+                <View
+                  style={{
+                    marginTop: 10,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    backgroundColor: DairyColors.surfaceMuted,
+                    padding: 10,
+                  }}
+                >
+                  <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                    {x("Attendance", "उपस्थिति")} ({attendanceDate} / {attendanceShift})
+                  </Text>
+
+                  <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                    {(["PRESENT", "ABSENT"] as AttendanceStatus[]).map((statusOption) => {
+                      const selected = attendanceDraft.status === statusOption;
+                      return (
+                        <Pressable
+                          key={statusOption}
+                          onPress={() =>
+                            setAttendanceDraft(item, {
+                              status: statusOption,
+                              hoursWorked:
+                                statusOption === "ABSENT" ? "0" : attendanceDraft.hoursWorked || defaultAttendanceDraft(item).hoursWorked,
+                            })
+                          }
+                          style={{
+                            borderWidth: 1,
+                            borderColor: selected ? DairyColors.primary : DairyColors.border,
+                            backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {statusOption === "PRESENT" ? x("Present", "उपस्थित") : x("Absent", "अनुपस्थित")}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+
+                  <TextInput
+                    style={{
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 10,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Hours worked", "काम के घंटे")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={attendanceDraft.hoursWorked}
+                    onChangeText={(value) => setAttendanceDraft(item, { hoursWorked: value })}
+                  />
+
+                  <TextInput
+                    style={{
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 10,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Notes (optional)", "नोट्स (वैकल्पिक)")}
+                    placeholderTextColor="#99A99A"
+                    value={attendanceDraft.notes}
+                    onChangeText={(value) => setAttendanceDraft(item, { notes: value })}
+                  />
+
+                  <Pressable
+                    disabled={attendanceSavingEmployeeId === item.employeeId}
+                    onPress={() => saveAttendanceForEmployee(item)}
+                    style={{
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.primary,
+                      borderRadius: 10,
+                      alignItems: "center",
+                      paddingVertical: 9,
+                      backgroundColor:
+                        attendanceSavingEmployeeId === item.employeeId ? DairyColors.backgroundAlt : DairyColors.primarySoft,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.primary, fontWeight: "700" }}>
+                      {attendanceSavingEmployeeId === item.employeeId
+                        ? x("Saving...", "सेव हो रहा है...")
+                        : x("Save Attendance", "उपस्थिति सेव करें")}
+                    </Text>
+                  </Pressable>
+                </View>
               ) : null}
 
               {canManageEmployees ? (

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import {
@@ -68,6 +69,7 @@ function inferRationPhase(animal?: AnimalResponse | null): FeedRationPhase {
 }
 
 export default function FeedScreen() {
+  const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
   const { user, hasAnyRole } = useAuth();
   const { x, t } = useI18n();
   const canAddFeed = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
@@ -305,6 +307,31 @@ export default function FeedScreen() {
   useEffect(() => {
     void refreshPendingSync();
   }, [refreshPendingSync]);
+
+  useEffect(() => {
+    const requestedAnimalIdRaw = Array.isArray(params.animalId) ? params.animalId[0] : params.animalId;
+    const requestedTagRaw = Array.isArray(params.tag) ? params.tag[0] : params.tag;
+    const requestedAnimalId = (requestedAnimalIdRaw ?? "").trim().toLowerCase();
+    const requestedTag = (requestedTagRaw ?? "").trim().toLowerCase();
+    if (!animals.length || (!requestedAnimalId && !requestedTag)) {
+      return;
+    }
+
+    const matched =
+      animals.find((row) => row.animalId.toLowerCase() === requestedAnimalId) ??
+      animals.find((row) => row.tag.toLowerCase() === requestedTag);
+    if (!matched) {
+      return;
+    }
+
+    if (filterAnimalId !== matched.animalId) {
+      setFilterAnimalId(matched.animalId);
+    }
+    if (!animalId) {
+      setAnimalId(matched.animalId);
+      setRationPhase(inferRationPhase(matched));
+    }
+  }, [animalId, animals, filterAnimalId, params.animalId, params.tag]);
 
   const resetForm = () => {
     setEditingFeedLogId(null);

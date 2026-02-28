@@ -131,7 +131,7 @@ type PendingSyncPayload =
   | FeedBulkLogCreatePendingPayload
   | FeedLogUpdatePendingPayload;
 
-type PendingSyncState = "PENDING" | "DEAD_LETTER";
+type PendingSyncState = "PENDING" | "DEAD_LETTER" | "CONFLICT";
 
 export type PendingSyncOperation = {
   localId: string;
@@ -160,6 +160,7 @@ export type PendingSyncSummary = {
   feedBulkCreate: number;
   feedLogUpdate: number;
   deadLetter: number;
+  conflict?: number;
 };
 
 export type PendingSyncFlushResult = {
@@ -226,15 +227,116 @@ function normalizeOperation(entry: Partial<PendingSyncOperation>): PendingSyncOp
   if (!entry || typeof entry.localId !== "string" || typeof entry.type !== "string") {
     return null;
   }
+  const state: PendingSyncState =
+    entry.state === "DEAD_LETTER"
+      ? "DEAD_LETTER"
+      : entry.state === "CONFLICT"
+        ? "CONFLICT"
+        : "PENDING";
   return {
     localId: entry.localId,
     type: entry.type as PendingSyncType,
-    state: entry.state === "DEAD_LETTER" ? "DEAD_LETTER" : "PENDING",
+    state,
     createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
     attempts: Number.isFinite(entry.attempts as number) ? (entry.attempts as number) : 0,
     lastError: entry.lastError ?? null,
     payload: entry.payload as PendingSyncPayload,
   };
+}
+
+function parseIsoTime(value: string): number {
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function conflictKeyForOperation(type: PendingSyncType, payload: PendingSyncPayload): string | null {
+  if (type === "DELIVERY_TASK_STATUS") {
+    const row = payload as DeliveryTaskStatusPendingPayload;
+    return `DELIVERY_TASK_STATUS:${row.deliveryTaskId}`;
+  }
+  if (type === "GENERIC_TASK_STATUS") {
+    const row = payload as GenericTaskStatusPendingPayload;
+    return `GENERIC_TASK_STATUS:${row.taskId}`;
+  }
+  if (type === "MILK_SAVE_BATCH_AND_ENTRIES") {
+    const row = payload as MilkSavePendingPayload;
+    return `MILK_SAVE_BATCH_AND_ENTRIES:${row.date}:${row.shift}`;
+  }
+  if (type === "QC_COW_UPDATE") {
+    const row = payload as QcCowUpdatePendingPayload;
+    return `QC_COW_UPDATE:${row.payload.date}:${row.payload.shift}`;
+  }
+  if (type === "QC_BATCH_STATUS_UPDATE") {
+    const row = payload as QcBatchStatusUpdatePendingPayload;
+    return `QC_BATCH_STATUS_UPDATE:${row.payload.date}:${row.payload.shift}`;
+  }
+  if (type === "SALE_SAVE") {
+    const row = payload as SaleSavePendingPayload;
+    return row.saleId ? `SALE_SAVE:${row.saleId}` : null;
+  }
+  if (type === "SALE_DELIVERY_UPDATE") {
+    const row = payload as SaleDeliveryUpdatePendingPayload;
+    return `SALE_DELIVERY_UPDATE:${row.saleId}`;
+  }
+  if (type === "SALE_RECONCILE_UPDATE") {
+    const row = payload as SaleReconcileUpdatePendingPayload;
+    return `SALE_RECONCILE_UPDATE:${row.saleId}`;
+  }
+  if (type === "EXPENSE_SAVE") {
+    const row = payload as ExpenseSavePendingPayload;
+    return row.expenseId ? `EXPENSE_SAVE:${row.expenseId}` : null;
+  }
+  if (type === "TREATMENT_SAVE") {
+    const row = payload as TreatmentSavePendingPayload;
+    return row.treatmentId ? `TREATMENT_SAVE:${row.animalId}:${row.treatmentId}` : null;
+  }
+  if (type === "FEED_LOG_UPDATE") {
+    const row = payload as FeedLogUpdatePendingPayload;
+    return `FEED_LOG_UPDATE:${row.feedLogId}`;
+  }
+  return null;
+}
+
+function conflictKeyFor(row: PendingSyncOperation): string | null {
+  return conflictKeyForOperation(row.type, row.payload);
+}
+
+// Keep only the latest operation for the same mutable target.
+function compactSuperseded(rows: PendingSyncOperation[]): PendingSyncOperation[] {
+  const latestByKey = new Map<string, PendingSyncOperation>();
+  for (const row of rows) {
+    const key = conflictKeyFor(row);
+    if (!key) {
+      continue;
+    }
+    const current = latestByKey.get(key);
+    if (!current || parseIsoTime(row.createdAt) >= parseIsoTime(current.createdAt)) {
+      latestByKey.set(key, row);
+    }
+  }
+
+  const filtered = rows.filter((row) => {
+    const key = conflictKeyFor(row);
+    if (!key) {
+      return true;
+    }
+    const latest = latestByKey.get(key);
+    return latest?.localId === row.localId;
+  });
+
+  return filtered.sort((a, b) => parseIsoTime(a.createdAt) - parseIsoTime(b.createdAt));
+}
+
+function isSyncConflictError(error: unknown): boolean {
+  const message = String((error as any)?.message ?? "").toLowerCase();
+  return (
+    message.includes("http 409") ||
+    message.includes("http 412") ||
+    message.includes("conflict") ||
+    message.includes("version mismatch") ||
+    message.includes("optimistic lock") ||
+    message.includes("stale")
+  );
 }
 
 async function writeRaw(rows: PendingSyncOperation[]): Promise<void> {
@@ -262,7 +364,7 @@ async function enqueue(type: PendingSyncType, payload: PendingSyncPayload, error
     attempts: 0,
     lastError: error ?? null,
   });
-  await writeRaw(current);
+  await writeRaw(compactSuperseded(current));
 }
 
 export async function queueDeliveryTaskStatus(
@@ -413,6 +515,7 @@ export async function getPendingSyncSummary(): Promise<PendingSyncSummary> {
     feedBulkCreate: rows.filter((row) => row.type === "FEED_BULK_LOG_CREATE").length,
     feedLogUpdate: rows.filter((row) => row.type === "FEED_LOG_UPDATE").length,
     deadLetter: rows.filter((row) => row.state === "DEAD_LETTER").length,
+    conflict: rows.filter((row) => row.state === "CONFLICT").length,
   };
 }
 
@@ -431,6 +534,11 @@ export async function removePendingSyncOperation(localId: string): Promise<void>
 export async function clearDeadLetterSyncOperations(): Promise<void> {
   const rows = await readRaw();
   await writeRaw(rows.filter((row) => row.state !== "DEAD_LETTER"));
+}
+
+export async function clearConflictSyncOperations(): Promise<void> {
+  const rows = await readRaw();
+  await writeRaw(rows.filter((row) => row.state !== "CONFLICT"));
 }
 
 export async function clearAllPendingSyncOperations(): Promise<void> {
@@ -453,16 +561,33 @@ export async function requeueDeadLetterSyncOperations(): Promise<void> {
   );
 }
 
-async function flushNow(): Promise<PendingSyncFlushResult> {
+export async function requeueConflictSyncOperations(): Promise<void> {
   const rows = await readRaw();
-  const pendingRows = rows.filter((row) => row.state !== "DEAD_LETTER");
+  await writeRaw(
+    rows.map((row) =>
+      row.state === "CONFLICT"
+        ? {
+            ...row,
+            state: "PENDING",
+            attempts: 0,
+            lastError: row.lastError ?? null,
+          }
+        : row
+    )
+  );
+}
+
+async function flushNow(): Promise<PendingSyncFlushResult> {
+  const normalizedRows = compactSuperseded(await readRaw());
+  const pendingRows = normalizedRows.filter((row) => row.state === "PENDING");
   if (pendingRows.length === 0) {
-    return { processed: 0, success: 0, failed: 0, remaining: 0 };
+    await writeRaw(normalizedRows);
+    return { processed: 0, success: 0, failed: 0, remaining: normalizedRows.length };
   }
 
   let success = 0;
   let failed = 0;
-  const remaining: PendingSyncOperation[] = rows.filter((row) => row.state === "DEAD_LETTER");
+  const remaining: PendingSyncOperation[] = normalizedRows.filter((row) => row.state !== "PENDING");
 
   for (const row of pendingRows) {
     try {
@@ -533,21 +658,28 @@ async function flushNow(): Promise<PendingSyncFlushResult> {
     } catch (e: any) {
       failed += 1;
       const nextAttempts = row.attempts + 1;
+      const conflict = isSyncConflictError(e);
+      const nextState: PendingSyncState = conflict
+        ? "CONFLICT"
+        : nextAttempts >= MAX_SYNC_ATTEMPTS
+          ? "DEAD_LETTER"
+          : "PENDING";
       remaining.push({
         ...row,
         attempts: nextAttempts,
-        state: nextAttempts >= MAX_SYNC_ATTEMPTS ? "DEAD_LETTER" : "PENDING",
+        state: nextState,
         lastError: String(e?.message ?? "Unknown sync error"),
       });
     }
   }
 
-  await writeRaw(remaining);
+  const compacted = compactSuperseded(remaining);
+  await writeRaw(compacted);
   return {
     processed: pendingRows.length,
     success,
     failed,
-    remaining: remaining.length,
+    remaining: compacted.length,
   };
 }
 
