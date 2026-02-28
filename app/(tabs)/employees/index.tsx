@@ -617,8 +617,9 @@ export default function EmployeesScreen() {
         activeEmployees.forEach((employee) => {
           const existing = savedByEmployeeId.get(employee.employeeId);
           if (!existing) {
+            const previousDraft = prev[employee.employeeId] ?? defaultAttendanceDraft(employee);
             next[employee.employeeId] = {
-              ...attendanceDraftFor(employee),
+              ...previousDraft,
               dirty: false,
             };
             return;
