@@ -197,10 +197,6 @@ export default function SalesScreen() {
     (name: string) => customerRecords.find((row) => row.customerName === name) ?? null,
     [customerRecords]
   );
-  const findCustomerRecordById = useCallback(
-    (id: string | null) => (id ? customerRecords.find((row) => row.customerId === id) ?? null : null),
-    [customerRecords]
-  );
 
   const applyCustomerDefaults = useCallback((row: CustomerRecordResponse | null) => {
     if (!row) {
