@@ -41,6 +41,8 @@ export default function AnimalsScreen() {
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingAnimalId, setEditingAnimalId] = useState<string | null>(null);
+  const [lookupTag, setLookupTag] = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
 
   const [tag, setTag] = useState("");
   const [name, setName] = useState("");
@@ -287,6 +289,29 @@ export default function AnimalsScreen() {
     router.push(`/animals/${encodeURIComponent(animalId)}`);
   };
 
+  const openAnimalByTag = async () => {
+    const tagValue = lookupTag.trim();
+    if (!tagValue) {
+      Alert.alert(x("Missing details", "जानकारी अधूरी"), x("Enter a tag to search.", "खोजने के लिए टैग डालें।"));
+      return;
+    }
+    try {
+      setLookupLoading(true);
+      const result = await AnimalApi.byTag(tagValue);
+      router.push(`/animals/${encodeURIComponent(result.animalId)}`);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Not found", "नहीं मिला"),
+        e?.message?.includes("HTTP 404")
+          ? x("No animal found for this tag.", "इस टैग का जानवर नहीं मिला।")
+          : e?.message ?? x("Could not search this tag.", "यह टैग खोजा नहीं जा सका।")
+      );
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
@@ -320,6 +345,53 @@ export default function AnimalsScreen() {
               >
                 <Ionicons name={loading ? "sync-circle" : "refresh"} size={20} color={DairyColors.primary} />
               </Pressable>
+            </View>
+
+            <View
+              style={{
+                marginTop: 12,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 12,
+                backgroundColor: DairyColors.surface,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {x("Quick Tag Lookup", "टैग से तुरंत खोज")}
+              </Text>
+              <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                <TextInput
+                  style={{
+                    flex: 1,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    padding: 10,
+                    color: DairyColors.textPrimary,
+                    backgroundColor: DairyColors.surfaceMuted,
+                  }}
+                  placeholder={x("Enter tag (e.g. GIR-123)", "टैग डालें (जैसे GIR-123)")}
+                  placeholderTextColor="#99A99A"
+                  value={lookupTag}
+                  onChangeText={setLookupTag}
+                  autoCapitalize="characters"
+                />
+                <Pressable
+                  onPress={() => void openAnimalByTag()}
+                  disabled={lookupLoading}
+                  style={{
+                    borderRadius: 10,
+                    backgroundColor: lookupLoading ? DairyColors.textSecondary : DairyColors.primary,
+                    paddingHorizontal: 14,
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text style={{ color: "white", fontWeight: "800" }}>
+                    {lookupLoading ? x("Searching...", "खोज रहे हैं...") : x("Find", "खोजें")}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
 
             {canAddAnimals ? (

@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
   AnimalApi,
@@ -12,9 +12,15 @@ import {
 } from "../../services/api";
 import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
+import {
+  getPendingSyncSummary,
+  PendingSyncSummary,
+  queueQcBatchStatusUpdate,
+  queueQcCowUpdate,
+  shouldQueueForOffline,
+} from "../../utils/offline-sync";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
-import { ReadOnlyBanner } from "../../../components/read-only-banner";
 
 type CowQcStatus = Exclude<QcStatus, "PENDING">;
 type CowQcDraft = {
@@ -71,7 +77,7 @@ function parseOptionalNumber(value: string, labelName: string): number | null {
 
 export default function QualityCheckScreen() {
   const { hasAnyRole } = useAuth();
-  const { x, label, t } = useI18n();
+  const { x, label } = useI18n();
   const canApproveBatch = hasAnyRole("ADMIN", "MANAGER");
 
   const [date] = useState<string>(todayLocalISO());
@@ -87,6 +93,24 @@ export default function QualityCheckScreen() {
   const [loading, setLoading] = useState(false);
   const [savingStep1, setSavingStep1] = useState(false);
   const [updating, setUpdating] = useState<QcStatus | "">("");
+  const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
+    total: 0,
+    deliveryTaskStatus: 0,
+    deliveryAddOn: 0,
+    deliveryTaskCreate: 0,
+    genericTaskStatus: 0,
+    milkSave: 0,
+    qcCowUpdate: 0,
+    qcBatchStatusUpdate: 0,
+    saleSave: 0,
+    saleDeliveryUpdate: 0,
+    saleReconcileUpdate: 0,
+    expenseSave: 0,
+    treatmentSave: 0,
+    feedBulkCreate: 0,
+    feedLogUpdate: 0,
+    deadLetter: 0,
+  });
 
   const batchKey = `${date}__${shift}`;
   const drafts = draftsByBatch[batchKey] ?? EMPTY_DRAFTS;
@@ -96,6 +120,11 @@ export default function QualityCheckScreen() {
 
   const batchLocked = batch?.qcStatus === "PASS";
   const canEditQc = canApproveBatch && !batchLocked;
+  const qcPendingCount = pendingSync.qcCowUpdate + pendingSync.qcBatchStatusUpdate;
+
+  const refreshPendingSync = useCallback(async () => {
+    setPendingSync(await getPendingSyncSummary());
+  }, []);
 
   const loadData = async () => {
     try {
@@ -146,6 +175,10 @@ export default function QualityCheckScreen() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, shift]);
+
+  useEffect(() => {
+    void refreshPendingSync();
+  }, [refreshPendingSync]);
 
   const setDraft = (animalId: string, patch: Partial<CowQcDraft>) => {
     if (!canEditQc) {
@@ -274,6 +307,46 @@ export default function QualityCheckScreen() {
           x("Batch is PASS. Step 1 QC cannot be edited.", "बैच PASS है। स्टेप 1 QC बदला नहीं जा सकता।")
         );
         await loadData();
+      } else if (shouldQueueForOffline(e)) {
+        const entries = animals.flatMap((animal) => {
+          const d = drafts[animal.animalId] ?? EMPTY_DRAFT;
+          const hasMetrics =
+            !!d.fat.trim() ||
+            !!d.snf.trim() ||
+            !!d.temperature.trim() ||
+            !!d.lactometer.trim() ||
+            !!d.smellNotes.trim() ||
+            !!d.rejectionReason.trim();
+          const effectiveStatus = d.qcStatus ?? (hasMetrics ? "HOLD" : undefined);
+          if (!effectiveStatus) {
+            return [];
+          }
+          return [
+            {
+              animalId: animal.animalId,
+              qcStatus: effectiveStatus as QcStatus,
+              fat: parseOptionalNumber(d.fat, "Fat"),
+              snf: parseOptionalNumber(d.snf, "SNF"),
+              temperature: parseOptionalNumber(d.temperature, "Temperature"),
+              lactometer: parseOptionalNumber(d.lactometer, "Lactometer"),
+              smellNotes: d.smellNotes.trim() || null,
+              rejectionReason: d.rejectionReason.trim() || null,
+            },
+          ];
+        });
+        if (entries.length > 0) {
+          await queueQcCowUpdate({ date, shift, entries }, message);
+          await refreshPendingSync();
+          setStep1SavedByBatch((prev) => ({ ...prev, [batchKey]: true }));
+          Alert.alert(
+            x("Saved Offline", "ऑफलाइन सेव"),
+            x(
+              "Per-cow QC is queued and will sync automatically.",
+              "प्रति गाय QC कतार में है और अपने-आप सिंक होगा।"
+            )
+          );
+          return;
+        }
       } else {
         Alert.alert(x("Save failed", "सेव नहीं हुआ"), message);
       }
@@ -338,6 +411,22 @@ export default function QualityCheckScreen() {
           x("Batch is PASS. Overall QC cannot be changed.", "बैच PASS है। ओवरऑल QC नहीं बदला जा सकता।")
         );
         await loadData();
+      } else if (shouldQueueForOffline(e)) {
+        await queueQcBatchStatusUpdate({ date, shift, qcStatus: status }, message);
+        await refreshPendingSync();
+        setBatch((prev) =>
+          prev
+            ? {
+                ...prev,
+                qcStatus: status,
+              }
+            : prev
+        );
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x("Overall QC status is queued and will sync automatically.", "ओवरऑल QC स्टेटस कतार में है और अपने-आप सिंक होगा।")
+        );
+        return;
       } else {
         Alert.alert(x("Update failed", "अपडेट नहीं हुआ"), message);
       }
@@ -401,6 +490,27 @@ export default function QualityCheckScreen() {
 
       <View
         style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 10,
+          backgroundColor: qcPendingCount > 0 ? DairyColors.warningSoft : DairyColors.successSoft,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {qcPendingCount > 0 ? x("QC Sync Pending", "QC सिंक बाकी") : x("QC Synced", "QC सिंक")}
+        </Text>
+        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+          {x(
+            `Cow updates ${pendingSync.qcCowUpdate} | Batch updates ${pendingSync.qcBatchStatusUpdate} | Dead letter ${pendingSync.deadLetter}`,
+            `गाय अपडेट ${pendingSync.qcCowUpdate} | बैच अपडेट ${pendingSync.qcBatchStatusUpdate} | डेड लेटर ${pendingSync.deadLetter}`
+          )}
+        </Text>
+      </View>
+
+      <View
+        style={{
           marginTop: 14,
           backgroundColor: DairyColors.surface,
           borderRadius: 14,
@@ -435,8 +545,6 @@ export default function QualityCheckScreen() {
           </Text>
         </View>
       </View>
-
-      {!canApproveBatch ? <ReadOnlyBanner subtitle={t("common.manageRestricted")} /> : null}
 
       {batchLocked ? (
         <View

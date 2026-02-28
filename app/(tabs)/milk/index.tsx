@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { DairyColors } from "../../constants/dairy-theme";
 import {
@@ -11,6 +11,13 @@ import {
   MilkEntryApi,
 } from "../../services/api";
 import { todayLocalISO } from "../../utils/date";
+import {
+  flushPendingSyncOperations,
+  getPendingSyncSummary,
+  PendingSyncSummary,
+  queueMilkSaveBatchAndEntries,
+  shouldQueueForOffline,
+} from "../../utils/offline-sync";
 import { useI18n } from "../../state/i18n";
 
 type Shift = "AM" | "PM";
@@ -26,9 +33,28 @@ export default function MilkEntryScreen() {
   const [draftByBatch, setDraftByBatch] = useState<Record<string, Record<string, string>>>({});
   const [lastSavedKey, setLastSavedKey] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [batch, setBatch] = useState<MilkBatchResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
+    total: 0,
+    deliveryTaskStatus: 0,
+    deliveryAddOn: 0,
+    deliveryTaskCreate: 0,
+    genericTaskStatus: 0,
+    milkSave: 0,
+    qcCowUpdate: 0,
+    qcBatchStatusUpdate: 0,
+    saleSave: 0,
+    saleDeliveryUpdate: 0,
+    saleReconcileUpdate: 0,
+    expenseSave: 0,
+    treatmentSave: 0,
+    feedBulkCreate: 0,
+    feedLogUpdate: 0,
+    deadLetter: 0,
+  });
 
   const currentBatchKey = `${date}__${shift}`;
   const values = draftByBatch[currentBatchKey] ?? EMPTY_VALUES;
@@ -45,6 +71,10 @@ export default function MilkEntryScreen() {
 
   const averagePerEntered = enteredCount > 0 ? total / enteredCount : 0;
   const batchLocked = batch?.qcStatus === "PASS";
+
+  const refreshPendingSync = useCallback(async () => {
+    setPendingSync(await getPendingSyncSummary());
+  }, []);
 
   const loadData = async () => {
     try {
@@ -71,6 +101,10 @@ export default function MilkEntryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, shift]);
 
+  useEffect(() => {
+    void refreshPendingSync();
+  }, [refreshPendingSync]);
+
   const saveAll = async () => {
     if (batchLocked) {
       Alert.alert(
@@ -92,14 +126,20 @@ export default function MilkEntryScreen() {
 
     try {
       setSaving(true);
-      const batchRes = await MilkApi.saveBatch({
+      const payload = {
         date,
         shift: shift as ApiShift,
         totalLiters: Number(total.toFixed(2)),
-      });
+      };
+      const entriesPayload = {
+        date,
+        shift: shift as ApiShift,
+        entries,
+      };
+      const batchRes = await MilkApi.saveBatch(payload);
       setBatch(batchRes);
 
-      await MilkEntryApi.saveEntries({ date, shift: shift as ApiShift, entries });
+      await MilkEntryApi.saveEntries(entriesPayload);
       setLastSavedKey(currentBatchKey);
       Alert.alert(
         x("Saved", "सेव हो गया"),
@@ -114,11 +154,58 @@ export default function MilkEntryScreen() {
           x("Batch is PASS. Milk entries cannot be edited.", "बैच PASS है। दूध एंट्री बदली नहीं जा सकती।")
         );
         await loadData();
+      } else if (shouldQueueForOffline(e)) {
+        await queueMilkSaveBatchAndEntries(
+          {
+            date,
+            shift: shift as ApiShift,
+            totalLiters: Number(total.toFixed(2)),
+            entries,
+          },
+          message
+        );
+        await refreshPendingSync();
+        setLastSavedKey(currentBatchKey);
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x(
+            "Network unavailable. Milk save is queued and will sync automatically.",
+            "नेटवर्क उपलब्ध नहीं है। दूध सेव कतार में है और अपने-आप सिंक होगा।"
+          )
+        );
       } else {
         Alert.alert(x("Save failed", "सेव नहीं हुआ"), message);
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const syncPending = async () => {
+    try {
+      setSyncing(true);
+      const result = await flushPendingSyncOperations();
+      await refreshPendingSync();
+      await loadData();
+      if (result.processed === 0) {
+        Alert.alert(x("No pending sync", "कोई पेंडिंग सिंक नहीं"), x("All operations are already synced.", "सभी ऑपरेशन पहले से सिंक हैं।"));
+        return;
+      }
+      Alert.alert(
+        x("Sync complete", "सिंक पूरा"),
+        x(
+          `Processed ${result.processed} | Synced ${result.success} | Remaining ${result.remaining}`,
+          `प्रोसेस ${result.processed} | सिंक ${result.success} | बाकी ${result.remaining}`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Sync failed", "सिंक असफल"),
+        e?.message ?? x("Could not sync pending operations.", "पेंडिंग ऑपरेशन सिंक नहीं हुए।")
+      );
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -277,6 +364,43 @@ export default function MilkEntryScreen() {
                   ? x(`Saved for ${shift}`, `${shift === "AM" ? "सुबह" : "शाम"} के लिए सेव`)
                   : x("Not saved yet", "अभी सेव नहीं हुआ")}
               </Text>
+            </View>
+
+            <View
+              style={{
+                marginTop: 10,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                backgroundColor: pendingSync.milkSave > 0 ? DairyColors.warningSoft : DairyColors.successSoft,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {pendingSync.milkSave > 0 ? x("Milk Sync Pending", "दूध सिंक बाकी") : x("Milk Synced", "दूध सिंक")}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Pending milk saves: ${pendingSync.milkSave} | Dead letter: ${pendingSync.deadLetter}`,
+                  `पेंडिंग दूध सेव: ${pendingSync.milkSave} | डेड लेटर: ${pendingSync.deadLetter}`
+                )}
+              </Text>
+              <Pressable
+                onPress={() => void syncPending()}
+                disabled={syncing}
+                style={{
+                  marginTop: 8,
+                  alignSelf: "flex-start",
+                  borderRadius: 10,
+                  backgroundColor: syncing ? DairyColors.textSecondary : DairyColors.primary,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: "800" }}>
+                  {syncing ? x("Syncing...", "सिंक हो रहा है...") : x("Sync Pending Now", "अभी सिंक करें")}
+                </Text>
+              </Pressable>
             </View>
 
             {batchLocked ? (

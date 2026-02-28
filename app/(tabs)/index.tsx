@@ -1,13 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Redirect } from "expo-router";
+import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { DairyColors } from "../constants/dairy-theme";
 import {
+  DeliveryChecklistItemResponse,
   CustomerLedgerRowResponse,
   DailyReportResponse,
   ExpenseApi,
   ExpensesSummaryResponse,
+  FeedManagementApi,
+  FeedManagementSummaryResponse,
   HealthApi,
   HealthSummaryResponse,
   MilkApi,
@@ -27,6 +30,25 @@ type StatusTone = {
   background: string;
   text: string;
   dot: string;
+};
+
+type DashboardRoute =
+  | "/health"
+  | "/treatments"
+  | "/breeding"
+  | "/sales"
+  | "/services"
+  | "/feed"
+  | "/tasks"
+  | "/stock"
+  | "/milk"
+  | "/today-tasks"
+  | "/qc";
+
+type QuickAction = {
+  key: string;
+  label: string;
+  href: DashboardRoute;
 };
 
 const liters = (value: number) => `${value.toFixed(2)} L`;
@@ -257,15 +279,26 @@ function PendingCustomerCard({
 }
 
 export default function DashboardScreen() {
-  const { hasAnyRole, user } = useAuth();
+  const router = useRouter();
+  const { user } = useAuth();
   const { x } = useI18n();
 
-  const canViewFinance = hasAnyRole("ADMIN");
+  const role = user?.role ?? null;
+  const isAdmin = role === "ADMIN";
+  const isManager = role === "MANAGER";
+  const isWorker = role === "WORKER";
+  const isVet = role === "VET";
+  const isDelivery = role === "DELIVERY";
+  const isFeedManager = role === "FEED_MANAGER";
+  const isOpsDashboard = isAdmin || isManager || isWorker;
+  const canViewFinance = isAdmin;
   const [date] = useState<string>(todayLocalISO());
   const [am, setAm] = useState<MilkBatchResponse | null>(null);
   const [pm, setPm] = useState<MilkBatchResponse | null>(null);
   const [report, setReport] = useState<DailyReportResponse | null>(null);
   const [weeklyTrend, setWeeklyTrend] = useState<WeeklyTrendResponse | null>(null);
+  const [deliveryRows, setDeliveryRows] = useState<DeliveryChecklistItemResponse[]>([]);
+  const [feedSummary, setFeedSummary] = useState<FeedManagementSummaryResponse | null>(null);
   const [salesSummary, setSalesSummary] = useState<SalesSummaryResponse | null>(null);
   const [expenseSummary, setExpenseSummary] = useState<ExpensesSummaryResponse | null>(null);
   const [healthSummary, setHealthSummary] = useState<HealthSummaryResponse | null>(null);
@@ -275,6 +308,51 @@ export default function DashboardScreen() {
   const load = async () => {
     try {
       setLoading(true);
+      if (isVet) {
+        const healthSummaryRes = await HealthApi.summary(date, 7);
+        setHealthSummary(healthSummaryRes);
+        setAm(null);
+        setPm(null);
+        setReport(null);
+        setWeeklyTrend(null);
+        setDeliveryRows([]);
+        setFeedSummary(null);
+        setSalesSummary(null);
+        setExpenseSummary(null);
+        setPendingLedgerRows([]);
+        return;
+      }
+
+      if (isDelivery) {
+        const rows = await SalesApi.deliveryList(date);
+        setDeliveryRows(rows);
+        setAm(null);
+        setPm(null);
+        setReport(null);
+        setWeeklyTrend(null);
+        setFeedSummary(null);
+        setSalesSummary(null);
+        setExpenseSummary(null);
+        setPendingLedgerRows([]);
+        setHealthSummary(null);
+        return;
+      }
+
+      if (isFeedManager) {
+        const summaryRes = await FeedManagementApi.summary(date);
+        setFeedSummary(summaryRes);
+        setAm(null);
+        setPm(null);
+        setReport(null);
+        setWeeklyTrend(null);
+        setDeliveryRows([]);
+        setSalesSummary(null);
+        setExpenseSummary(null);
+        setPendingLedgerRows([]);
+        setHealthSummary(null);
+        return;
+      }
+
       const fromDate = shiftIsoDate(date, -30);
       const [amRes, pmRes, reportRes, weeklyRes, healthSummaryRes] = await Promise.all([
         MilkApi.getBatch(date, "AM"),
@@ -301,6 +379,8 @@ export default function DashboardScreen() {
       setPm(pmRes);
       setReport(reportRes);
       setWeeklyTrend(weeklyRes);
+      setDeliveryRows([]);
+      setFeedSummary(null);
       setSalesSummary(salesSummaryRes);
       setExpenseSummary(expenseSummaryRes);
       setPendingLedgerRows(ledgerRes);
@@ -319,7 +399,7 @@ export default function DashboardScreen() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, canViewFinance]);
+  }, [date, role, canViewFinance]);
 
   const total = useMemo(() => (am?.totalLiters ?? 0) + (pm?.totalLiters ?? 0), [am, pm]);
 
@@ -359,6 +439,85 @@ export default function DashboardScreen() {
     [pendingLedgerRows]
   );
 
+  const deliverySummary = useMemo(() => {
+    const totalStops = deliveryRows.length;
+    const deliveredStops = deliveryRows.filter((row) => row.delivered).length;
+    const pendingStops = totalStops - deliveredStops;
+    const totalAmount = deliveryRows.reduce((sum, row) => sum + row.totalAmount, 0);
+    const totalReceived = deliveryRows.reduce((sum, row) => sum + row.receivedAmount, 0);
+    const totalPending = deliveryRows.reduce((sum, row) => sum + row.pendingAmount, 0);
+    return {
+      totalStops,
+      deliveredStops,
+      pendingStops,
+      totalAmount,
+      totalReceived,
+      totalPending,
+    };
+  }, [deliveryRows]);
+
+  const roleTitle = useMemo(() => {
+    if (isAdmin) return x("Admin Dashboard", "एडमिन डैशबोर्ड");
+    if (isManager) return x("Manager Dashboard", "मैनेजर डैशबोर्ड");
+    if (isWorker) return x("Worker Dashboard", "वर्कर डैशबोर्ड");
+    if (isVet) return x("Vet Dashboard", "वेट डैशबोर्ड");
+    if (isDelivery) return x("Delivery Dashboard", "डिलीवरी डैशबोर्ड");
+    if (isFeedManager) return x("Feed Manager Dashboard", "फीड मैनेजर डैशबोर्ड");
+    return x("Dashboard", "डैशबोर्ड");
+  }, [isAdmin, isDelivery, isFeedManager, isManager, isVet, isWorker, x]);
+
+  const roleSubtitle = useMemo(() => {
+    if (isAdmin) return x("Finance + operations + exception alerts", "वित्त + ऑपरेशन + अपवाद अलर्ट");
+    if (isManager) return x("Daily production, QC and team operations", "दैनिक उत्पादन, QC और टीम ऑपरेशन");
+    if (isWorker) return x("Shift execution and pending farm actions", "शिफ्ट काम और लंबित फार्म कार्य");
+    if (isVet) return x("Vaccination, deworming and treatment priorities", "टीका, पेट दवा और ट्रीटमेंट प्राथमिकताएं");
+    if (isDelivery) return x("Today delivery completion and collection status", "आज की डिलीवरी और वसूली स्थिति");
+    if (isFeedManager) return x("Feed stock, recipes and checklist execution", "फीड स्टॉक, रेसिपी और चेकलिस्ट निष्पादन");
+    return x("Daily farm status", "दैनिक फार्म स्थिति");
+  }, [isAdmin, isDelivery, isFeedManager, isManager, isVet, isWorker, x]);
+
+  const quickActions = useMemo<QuickAction[]>(() => {
+    if (isVet) {
+      return [
+        { key: "health", label: x("Animal Health", "एनिमल हेल्थ"), href: "/health" },
+        { key: "treatments", label: x("Treatments", "ट्रीटमेंट"), href: "/treatments" },
+        { key: "breeding", label: x("Breeding", "ब्रीडिंग"), href: "/breeding" },
+      ];
+    }
+    if (isDelivery) {
+      return [
+        { key: "sales", label: x("Delivery Checklist", "डिलीवरी चेकलिस्ट"), href: "/sales" },
+        { key: "services", label: x("Services", "सर्विसेस"), href: "/services" },
+      ];
+    }
+    if (isFeedManager) {
+      return [
+        { key: "feed", label: x("Feed", "फीड"), href: "/feed" },
+        { key: "tasks", label: x("Task Manager", "टास्क मैनेजर"), href: "/tasks" },
+        { key: "stock", label: x("Stock", "स्टॉक"), href: "/stock" },
+      ];
+    }
+    if (isWorker) {
+      return [
+        { key: "milk", label: x("Milk Entry", "दूध एंट्री"), href: "/milk" },
+        { key: "todayTasks", label: x("Today Tasks", "आज के टास्क"), href: "/today-tasks" },
+        { key: "feed", label: x("Feed", "फीड"), href: "/feed" },
+      ];
+    }
+    if (isManager) {
+      return [
+        { key: "milk", label: x("Milk Entry", "दूध एंट्री"), href: "/milk" },
+        { key: "qc", label: x("QC", "QC"), href: "/qc" },
+        { key: "tasks", label: x("Today Tasks", "आज के टास्क"), href: "/today-tasks" },
+      ];
+    }
+    return [
+      { key: "milk", label: x("Milk Entry", "दूध एंट्री"), href: "/milk" },
+      { key: "qc", label: x("QC", "QC"), href: "/qc" },
+      { key: "services", label: x("Services", "सर्विसेस"), href: "/services" },
+    ];
+  }, [isDelivery, isFeedManager, isManager, isVet, isWorker, x]);
+
   const statusLabel = (status?: QcStatus) => {
     if (status === "PASS") {
       return x("PASS", "पास");
@@ -377,6 +536,60 @@ export default function DashboardScreen() {
 
   const alerts = useMemo(() => {
     const next: string[] = [];
+    if (isDelivery) {
+      if (deliverySummary.pendingStops > 0) {
+        next.push(
+          x(
+            `Pending deliveries: ${deliverySummary.pendingStops}`,
+            `बाकी डिलीवरी: ${deliverySummary.pendingStops}`
+          )
+        );
+      }
+      if (deliverySummary.totalPending > 0) {
+        next.push(
+          x(
+            `Collection pending: ${money(deliverySummary.totalPending)}`,
+            `बाकी वसूली: ${money(deliverySummary.totalPending)}`
+          )
+        );
+      }
+      return next;
+    }
+    if (isFeedManager) {
+      if ((feedSummary?.lowStockMaterials ?? 0) > 0) {
+        next.push(
+          x(
+            `Low stock materials: ${feedSummary?.lowStockMaterials ?? 0}`,
+            `कम स्टॉक सामग्री: ${feedSummary?.lowStockMaterials ?? 0}`
+          )
+        );
+      }
+      if ((feedSummary?.openTasks ?? 0) > 0) {
+        next.push(
+          x(`Open feed tasks: ${feedSummary?.openTasks ?? 0}`, `खुले फीड टास्क: ${feedSummary?.openTasks ?? 0}`)
+        );
+      }
+      return next;
+    }
+    if (isVet) {
+      if ((healthSummary?.vaccinationsOverdue ?? 0) > 0) {
+        next.push(
+          x(
+            `Vaccinations overdue: ${healthSummary?.vaccinationsOverdue ?? 0}`,
+            `टीका समय से बाकी: ${healthSummary?.vaccinationsOverdue ?? 0}`
+          )
+        );
+      }
+      if ((healthSummary?.dewormingOverdue ?? 0) > 0) {
+        next.push(
+          x(
+            `Deworming overdue: ${healthSummary?.dewormingOverdue ?? 0}`,
+            `पेट की दवा समय से बाकी: ${healthSummary?.dewormingOverdue ?? 0}`
+          )
+        );
+      }
+      return next;
+    }
     if ((report?.holdBatches ?? 0) > 0) {
       next.push(
         x(`${report?.holdBatches ?? 0} batch is on HOLD`, `${report?.holdBatches ?? 0} बैच होल्ड पर है`)
@@ -425,17 +638,21 @@ export default function DashboardScreen() {
       );
     }
     return next;
-  }, [report, salesSummary, healthSummary, canViewFinance, netProfit, x]);
-
-  if (user?.role === "VET") {
-    return <Redirect href="/health" />;
-  }
-  if (user?.role === "DELIVERY") {
-    return <Redirect href="/sales" />;
-  }
-  if (user?.role === "FEED_MANAGER") {
-    return <Redirect href="/feed" />;
-  }
+  }, [
+    canViewFinance,
+    deliverySummary.pendingStops,
+    deliverySummary.totalPending,
+    feedSummary?.lowStockMaterials,
+    feedSummary?.openTasks,
+    healthSummary,
+    isDelivery,
+    isFeedManager,
+    isVet,
+    netProfit,
+    report,
+    salesSummary,
+    x,
+  ]);
 
   return (
     <ScrollView
@@ -478,116 +695,160 @@ export default function DashboardScreen() {
       <View
         style={{
           marginTop: 14,
-          borderRadius: 16,
-          backgroundColor: DairyColors.primary,
-          padding: 16,
+          backgroundColor: DairyColors.surface,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          padding: 14,
         }}
       >
-        <Text style={{ color: "#DDF0E5", fontWeight: "600" }}>
-          {x("TODAY TOTAL PRODUCTION", "आज का कुल उत्पादन")}
+        <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
+          {roleTitle}
         </Text>
-        <Text style={{ marginTop: 6, fontSize: 34, fontWeight: "800", color: "white" }}>
-          {liters(total)}
-        </Text>
-        <View style={{ marginTop: 12, flexDirection: "row", gap: 8 }}>
-          <View
-            style={{
-              borderRadius: 999,
-              backgroundColor: DairyColors.morningSoft,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-            }}
-          >
-            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-              {x(`AM ${liters(am?.totalLiters ?? 0)}`, `सुबह ${liters(am?.totalLiters ?? 0)}`)}
-            </Text>
-          </View>
-          <View
-            style={{
-              borderRadius: 999,
-              backgroundColor: DairyColors.eveningSoft,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-            }}
-          >
-            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-              {x(`PM ${liters(pm?.totalLiters ?? 0)}`, `शाम ${liters(pm?.totalLiters ?? 0)}`)}
-            </Text>
-          </View>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>{roleSubtitle}</Text>
+        <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {quickActions.map((action) => (
+            <Pressable
+              key={action.key}
+              onPress={() => router.push(action.href)}
+              style={{
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                backgroundColor: DairyColors.surfaceMuted,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                {action.label}
+              </Text>
+            </Pressable>
+          ))}
         </View>
       </View>
 
-      <View style={{ marginTop: 14, flexDirection: "row", gap: 10 }}>
-        <ShiftCard
-          shift="AM"
-          totalLiters={am?.totalLiters ?? 0}
-          qcStatus={am?.qcStatus}
-          accentBackground={DairyColors.morningSoft}
-          statusLabel={statusLabel}
-          shiftLabel={shiftLabel}
-        />
-        <ShiftCard
-          shift="PM"
-          totalLiters={pm?.totalLiters ?? 0}
-          qcStatus={pm?.qcStatus}
-          accentBackground={DairyColors.eveningSoft}
-          statusLabel={statusLabel}
-          shiftLabel={shiftLabel}
-        />
-      </View>
+      {isOpsDashboard ? (
+        <>
+          <View
+            style={{
+              marginTop: 14,
+              borderRadius: 16,
+              backgroundColor: DairyColors.primary,
+              padding: 16,
+            }}
+          >
+            <Text style={{ color: "#DDF0E5", fontWeight: "600" }}>
+              {x("TODAY TOTAL PRODUCTION", "आज का कुल उत्पादन")}
+            </Text>
+            <Text style={{ marginTop: 6, fontSize: 34, fontWeight: "800", color: "white" }}>
+              {liters(total)}
+            </Text>
+            <View style={{ marginTop: 12, flexDirection: "row", gap: 8 }}>
+              <View
+                style={{
+                  borderRadius: 999,
+                  backgroundColor: DairyColors.morningSoft,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                  {x(`AM ${liters(am?.totalLiters ?? 0)}`, `सुबह ${liters(am?.totalLiters ?? 0)}`)}
+                </Text>
+              </View>
+              <View
+                style={{
+                  borderRadius: 999,
+                  backgroundColor: DairyColors.eveningSoft,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                  {x(`PM ${liters(pm?.totalLiters ?? 0)}`, `शाम ${liters(pm?.totalLiters ?? 0)}`)}
+                </Text>
+              </View>
+            </View>
+          </View>
 
-      <View
-        style={{
-          marginTop: 14,
-          backgroundColor: DairyColors.surface,
-          borderRadius: 14,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          padding: 14,
-        }}
-      >
-        <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
-          {x("7-Day Production & QC Trend", "7 दिन का उत्पादन और QC ट्रेंड")}
-        </Text>
-        {weeklyPoints.length === 0 ? (
-          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
-            {x("No weekly data available.", "साप्ताहिक डेटा उपलब्ध नहीं है।")}
-          </Text>
-        ) : (
-          weeklyPoints.map((point) => (
-            <WeeklyTrendRow
-              key={point.date}
-              point={point}
-              maxLiters={maxWeeklyLiters}
-              passLabel={x("PASS", "पास")}
+          <View style={{ marginTop: 14, flexDirection: "row", gap: 10 }}>
+            <ShiftCard
+              shift="AM"
+              totalLiters={am?.totalLiters ?? 0}
+              qcStatus={am?.qcStatus}
+              accentBackground={DairyColors.morningSoft}
+              statusLabel={statusLabel}
+              shiftLabel={shiftLabel}
             />
-          ))
-        )}
-      </View>
+            <ShiftCard
+              shift="PM"
+              totalLiters={pm?.totalLiters ?? 0}
+              qcStatus={pm?.qcStatus}
+              accentBackground={DairyColors.eveningSoft}
+              statusLabel={statusLabel}
+              shiftLabel={shiftLabel}
+            />
+          </View>
+        </>
+      ) : null}
 
-      <View
-        style={{
-          marginTop: 14,
-          backgroundColor: DairyColors.surface,
-          borderRadius: 14,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          padding: 14,
-        }}
-      >
-        <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
-          {x("Quality Insights", "क्वालिटी जानकारी")}
-        </Text>
-        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
-          {x(
-            `PASS ${report?.passBatches ?? 0} • HOLD ${report?.holdBatches ?? 0} • REJECT ${report?.rejectBatches ?? 0}`,
-            `पास ${report?.passBatches ?? 0} • होल्ड ${report?.holdBatches ?? 0} • रिजेक्ट ${report?.rejectBatches ?? 0}`
+      {isOpsDashboard && !isWorker ? (
+        <View
+          style={{
+            marginTop: 14,
+            backgroundColor: DairyColors.surface,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            padding: 14,
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
+            {x("7-Day Production & QC Trend", "7 दिन का उत्पादन और QC ट्रेंड")}
+          </Text>
+          {weeklyPoints.length === 0 ? (
+            <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+              {x("No weekly data available.", "साप्ताहिक डेटा उपलब्ध नहीं है।")}
+            </Text>
+          ) : (
+            weeklyPoints.map((point) => (
+              <WeeklyTrendRow
+                key={point.date}
+                point={point}
+                maxLiters={maxWeeklyLiters}
+                passLabel={x("PASS", "पास")}
+              />
+            ))
           )}
-        </Text>
+        </View>
+      ) : null}
 
-        <ProgressRow label={x("Batch pass rate", "बैच पास दर")} value={passRate} color={DairyColors.success} />
-        <ProgressRow label={x("Per-cow QC coverage", "प्रति गाय QC कवरेज")} value={cowQcCoverage} color={DairyColors.info} />
-      </View>
+      {isOpsDashboard ? (
+        <View
+          style={{
+            marginTop: 14,
+            backgroundColor: DairyColors.surface,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            padding: 14,
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
+            {x("Quality Insights", "क्वालिटी जानकारी")}
+          </Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `PASS ${report?.passBatches ?? 0} • HOLD ${report?.holdBatches ?? 0} • REJECT ${report?.rejectBatches ?? 0}`,
+              `पास ${report?.passBatches ?? 0} • होल्ड ${report?.holdBatches ?? 0} • रिजेक्ट ${report?.rejectBatches ?? 0}`
+            )}
+          </Text>
+
+          <ProgressRow label={x("Batch pass rate", "बैच पास दर")} value={passRate} color={DairyColors.success} />
+          <ProgressRow label={x("Per-cow QC coverage", "प्रति गाय QC कवरेज")} value={cowQcCoverage} color={DairyColors.info} />
+        </View>
+      ) : null}
 
       {canViewFinance ? (
         <View
@@ -706,81 +967,169 @@ export default function DashboardScreen() {
         </View>
       ) : null}
 
-      <View
-        style={{
-          marginTop: 14,
-          backgroundColor: DairyColors.surface,
-          borderRadius: 14,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          padding: 14,
-        }}
-      >
-        <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
-          {x("Animal Health Watch", "जानवर सेहत निगरानी")}
-        </Text>
-        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
-          {x("Vaccination and deworming due tracking", "टीका और पेट की दवा की देय स्थिति")}
-        </Text>
-        <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-          <View
-            style={{
-              flex: 1,
-              minWidth: 130,
-              borderRadius: 12,
-              backgroundColor: DairyColors.warningSoft,
-              padding: 10,
-            }}
-          >
-            <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Today", "आज के टीके")}</Text>
-            <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
-              {healthSummary?.vaccinationsDueToday ?? 0}
-            </Text>
+      {isDelivery ? (
+        <View
+          style={{
+            marginTop: 14,
+            backgroundColor: DairyColors.surface,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            padding: 14,
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
+            {x("Delivery Progress", "डिलीवरी प्रगति")}
+          </Text>
+          <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Total Stops", "कुल स्टॉप")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {deliverySummary.totalStops}
+              </Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.successSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Delivered", "डिलीवर")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {deliverySummary.deliveredStops}
+              </Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Pending", "बाकी")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {deliverySummary.pendingStops}
+              </Text>
+            </View>
           </View>
-          <View
-            style={{
-              flex: 1,
-              minWidth: 130,
-              borderRadius: 12,
-              backgroundColor: DairyColors.dangerSoft,
-              padding: 10,
-            }}
-          >
-            <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Overdue", "बाकी टीके")}</Text>
-            <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
-              {healthSummary?.vaccinationsOverdue ?? 0}
-            </Text>
-          </View>
-          <View
-            style={{
-              flex: 1,
-              minWidth: 130,
-              borderRadius: 12,
-              backgroundColor: DairyColors.infoSoft,
-              padding: 10,
-            }}
-          >
-            <Text style={{ color: DairyColors.textSecondary }}>{x("Deworming Today", "आज की पेट दवा")}</Text>
-            <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
-              {healthSummary?.dewormingDueToday ?? 0}
-            </Text>
-          </View>
-          <View
-            style={{
-              flex: 1,
-              minWidth: 130,
-              borderRadius: 12,
-              backgroundColor: DairyColors.dangerSoft,
-              padding: 10,
-            }}
-          >
-            <Text style={{ color: DairyColors.textSecondary }}>{x("Deworming Overdue", "बाकी पेट दवा")}</Text>
-            <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
-              {healthSummary?.dewormingOverdue ?? 0}
-            </Text>
+          <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
+            {x(
+              `Collected ${money(deliverySummary.totalReceived)} | Pending ${money(deliverySummary.totalPending)} | Total ${money(deliverySummary.totalAmount)}`,
+              `वसूली ${money(deliverySummary.totalReceived)} | बाकी ${money(deliverySummary.totalPending)} | कुल ${money(deliverySummary.totalAmount)}`
+            )}
+          </Text>
+        </View>
+      ) : null}
+
+      {isFeedManager ? (
+        <View
+          style={{
+            marginTop: 14,
+            backgroundColor: DairyColors.surface,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            padding: 14,
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
+            {x("Feed Operations", "फीड ऑपरेशन")}
+          </Text>
+          <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Materials", "सामग्री")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {feedSummary?.totalMaterials ?? 0}
+              </Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Low Stock", "कम स्टॉक")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {feedSummary?.lowStockMaterials ?? 0}
+              </Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.accentSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Open Tasks", "खुले टास्क")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {feedSummary?.openTasks ?? 0}
+              </Text>
+            </View>
+            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.successSoft, padding: 10 }}>
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Done Today", "आज पूरे")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {feedSummary?.doneTasksToday ?? 0}
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
+      ) : null}
+
+      {isOpsDashboard || isVet ? (
+        <View
+          style={{
+            marginTop: 14,
+            backgroundColor: DairyColors.surface,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            padding: 14,
+          }}
+        >
+          <Text style={{ fontSize: 16, fontWeight: "700", color: DairyColors.textPrimary }}>
+            {x("Animal Health Watch", "जानवर सेहत निगरानी")}
+          </Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x("Vaccination and deworming due tracking", "टीका और पेट की दवा की देय स्थिति")}
+          </Text>
+          <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+            <View
+              style={{
+                flex: 1,
+                minWidth: 130,
+                borderRadius: 12,
+                backgroundColor: DairyColors.warningSoft,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Today", "आज के टीके")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {healthSummary?.vaccinationsDueToday ?? 0}
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                minWidth: 130,
+                borderRadius: 12,
+                backgroundColor: DairyColors.dangerSoft,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Overdue", "बाकी टीके")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {healthSummary?.vaccinationsOverdue ?? 0}
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                minWidth: 130,
+                borderRadius: 12,
+                backgroundColor: DairyColors.infoSoft,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Deworming Today", "आज की पेट दवा")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {healthSummary?.dewormingDueToday ?? 0}
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                minWidth: 130,
+                borderRadius: 12,
+                backgroundColor: DairyColors.dangerSoft,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textSecondary }}>{x("Deworming Overdue", "बाकी पेट दवा")}</Text>
+              <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
+                {healthSummary?.dewormingOverdue ?? 0}
+              </Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
 
       {canViewFinance ? (
         <View

@@ -15,6 +15,12 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
 import { shiftIsoDate, todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
+import {
+  getPendingSyncSummary,
+  PendingSyncSummary,
+  queueTreatmentSave,
+  shouldQueueForOffline,
+} from "../../utils/offline-sync";
 
 type DueFilter = "ALL" | "DUE_TODAY" | "DUE_SOON" | "OVERDUE";
 
@@ -111,6 +117,24 @@ export default function TreatmentsScreen() {
   const [saving, setSaving] = useState(false);
   const [dueFilter, setDueFilter] = useState<DueFilter>("ALL");
   const [editingTreatmentId, setEditingTreatmentId] = useState<string | null>(null);
+  const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
+    total: 0,
+    deliveryTaskStatus: 0,
+    deliveryAddOn: 0,
+    deliveryTaskCreate: 0,
+    genericTaskStatus: 0,
+    milkSave: 0,
+    qcCowUpdate: 0,
+    qcBatchStatusUpdate: 0,
+    saleSave: 0,
+    saleDeliveryUpdate: 0,
+    saleReconcileUpdate: 0,
+    expenseSave: 0,
+    treatmentSave: 0,
+    feedBulkCreate: 0,
+    feedLogUpdate: 0,
+    deadLetter: 0,
+  });
 
   const [treatmentDate, setTreatmentDate] = useState(todayLocalISO());
   const [diagnosis, setDiagnosis] = useState("");
@@ -250,9 +274,17 @@ export default function TreatmentsScreen() {
     }
   }, [loadTreatments, params.animalId, params.tag, selectedAnimalId, x]);
 
+  const refreshPendingSync = useCallback(async () => {
+    setPendingSync(await getPendingSyncSummary());
+  }, []);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    void refreshPendingSync();
+  }, [refreshPendingSync]);
 
   useEffect(() => {
     const fromParam = (params.tag ?? params.animalId ?? "").trim();
@@ -411,6 +443,21 @@ export default function TreatmentsScreen() {
             "ट्रीटमेंट रिकॉर्ड सिर्फ ADMIN, MANAGER या VET जोड़ सकते हैं।"
           )
         );
+      } else if (shouldQueueForOffline(e)) {
+        await queueTreatmentSave(
+          {
+            animalId: selectedAnimalId,
+            treatmentId: editingTreatmentId,
+            payload,
+          },
+          message
+        );
+        await refreshPendingSync();
+        resetForm();
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x("Treatment record is queued and will sync automatically.", "ट्रीटमेंट रिकॉर्ड कतार में है और अपने-आप सिंक होगा।")
+        );
       } else {
         Alert.alert(x("Save failed", "सेव नहीं हुआ"), message);
       }
@@ -499,6 +546,7 @@ export default function TreatmentsScreen() {
     }
     return treatments.filter((row) => classifyDue(row.followUpDate, date) === dueFilter);
   }, [date, dueFilter, treatments]);
+  const treatmentPendingCount = pendingSync.treatmentSave;
 
   return (
     <ScrollView
@@ -529,6 +577,29 @@ export default function TreatmentsScreen() {
         >
           <Ionicons name={loading ? "sync-circle" : "refresh"} size={20} color={DairyColors.primary} />
         </Pressable>
+      </View>
+
+      <View
+        style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 10,
+          backgroundColor: treatmentPendingCount > 0 ? DairyColors.warningSoft : DairyColors.successSoft,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {treatmentPendingCount > 0
+            ? x("Treatment Sync Pending", "ट्रीटमेंट सिंक बाकी")
+            : x("Treatment Synced", "ट्रीटमेंट सिंक")}
+        </Text>
+        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+          {x(
+            `Queued treatment saves ${pendingSync.treatmentSave} | Dead letter ${pendingSync.deadLetter}`,
+            `कतार में ट्रीटमेंट सेव ${pendingSync.treatmentSave} | डेड लेटर ${pendingSync.deadLetter}`
+          )}
+        </Text>
       </View>
       <View
         style={{

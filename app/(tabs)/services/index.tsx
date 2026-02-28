@@ -52,10 +52,17 @@ export default function ServicesScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
   const { t, x } = useI18n();
-  const isVet = user?.role === "VET";
-  const isDelivery = user?.role === "DELIVERY";
-  const isFeedManager = user?.role === "FEED_MANAGER";
-  const isAdmin = user?.role === "ADMIN";
+  const role = user?.role;
+  const isAdmin = role === "ADMIN";
+  const canOpenClinical = role === "ADMIN" || role === "MANAGER" || role === "VET";
+  const canOpenWorklist = role !== "DELIVERY" && role !== "VET";
+  const canOpenEmployees = role === "ADMIN" || role === "MANAGER";
+  const canOpenCustomers = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
+  const canOpenDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY";
+  const canOpenSales = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
+  const canOpenExpenses = role === "ADMIN";
+  const canOpenStock = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
+  const canOpenTaskManager = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
 
   return (
     <ScrollView
@@ -121,7 +128,7 @@ export default function ServicesScreen() {
       </View>
 
       <View style={{ marginTop: 14, gap: 10 }}>
-        {!isDelivery && !isFeedManager ? (
+        {canOpenClinical ? (
           <ServiceCard
             title={t("services.animalHealthTitle")}
             subtitle={t("services.animalHealthSubtitle")}
@@ -130,7 +137,7 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isDelivery && !isFeedManager ? (
+        {canOpenClinical ? (
           <ServiceCard
             title={t("services.breedingTitle")}
             subtitle={t("services.breedingSubtitle")}
@@ -139,7 +146,7 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isDelivery && !isFeedManager ? (
+        {canOpenClinical ? (
           <ServiceCard
             title={t("services.treatmentsTitle")}
             subtitle={t("services.treatmentsSubtitle")}
@@ -148,7 +155,7 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isDelivery && !isVet ? (
+        {canOpenWorklist ? (
           <ServiceCard
             title={t("services.worklistTitle")}
             subtitle={t("services.worklistSubtitle")}
@@ -157,7 +164,7 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isDelivery && !isVet && !isFeedManager ? (
+        {canOpenEmployees ? (
           <ServiceCard
             title={t("services.employeesTitle")}
             subtitle={t("services.employeesSubtitle")}
@@ -166,7 +173,7 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isVet && !isFeedManager ? (
+        {canOpenCustomers ? (
           <ServiceCard
             title={x("Customers", "ग्राहक")}
             subtitle={x("Daily subscriptions and customer master data", "दैनिक सब्सक्रिप्शन और ग्राहक मास्टर रिकॉर्ड")}
@@ -175,7 +182,16 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isVet && !isFeedManager ? (
+        {canOpenDeliveryOps ? (
+          <ServiceCard
+            title={x("Delivery Ops", "डिलीवरी ऑप्स")}
+            subtitle={x("Route checklist, add-on requests and EOD reconciliation", "रूट चेकलिस्ट, एक्स्ट्रा रिक्वेस्ट और दिन का मिलान")}
+            icon="navigate"
+            onPress={() => router.push("/delivery-ops")}
+          />
+        ) : null}
+
+        {canOpenSales ? (
           <ServiceCard
             title={t("services.salesTitle")}
             subtitle={t("services.salesSubtitle")}
@@ -184,7 +200,7 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {!isDelivery && !isVet && !isFeedManager ? (
+        {canOpenExpenses ? (
           <ServiceCard
             title={t("services.expensesTitle")}
             subtitle={t("services.expensesSubtitle")}
@@ -193,11 +209,52 @@ export default function ServicesScreen() {
           />
         ) : null}
 
+        {canOpenStock ? (
+          <ServiceCard
+            title={x("Stock Manager", "स्टॉक मैनेजर")}
+            subtitle={x(
+              "Raw material inventory + milk/curd/buttermilk/ghee processing stock",
+              "रॉ मटेरियल + दूध/दही/छाछ/घी प्रोसेसिंग स्टॉक"
+            )}
+            icon="layers"
+            onPress={() => router.push("/stock")}
+          />
+        ) : null}
+
+        <ServiceCard
+          title={x("Today Tasks", "आज के टास्क")}
+          subtitle={x(
+            "Worker-friendly checklist grouped by due time",
+            "वर्कर फ्रेंडली चेकलिस्ट, समय के हिसाब से ग्रुप की हुई"
+          )}
+          icon="today"
+          onPress={() => router.push("/today-tasks")}
+        />
+
+        {canOpenTaskManager ? (
+          <ServiceCard
+            title={x("Task Manager", "टास्क मैनेजर")}
+            subtitle={x(
+              "Create and track feed, delivery, farm and other tasks",
+              "फीड, डिलीवरी, फार्म और अन्य टास्क बनाएं और ट्रैक करें"
+            )}
+            icon="checkbox"
+            onPress={() => router.push("/tasks")}
+          />
+        ) : null}
+
         <ServiceCard
           title={t("services.profileTitle")}
           subtitle={t("services.profileSubtitle")}
           icon="person-circle"
           onPress={() => router.push("/profile")}
+        />
+
+        <ServiceCard
+          title={x("Sync Center", "सिंक सेंटर")}
+          subtitle={x("Offline queue monitor, retry and recovery", "ऑफलाइन कतार मॉनिटर, रीट्राई और रिकवरी")}
+          icon="cloud-upload"
+          onPress={() => router.push("/sync")}
         />
 
         {isAdmin ? (

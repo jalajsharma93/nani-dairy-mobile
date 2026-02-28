@@ -1,13 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
   CreateSalePayload,
   CustomerApi,
+  DeliveryTaskApi,
+  DeliveryTaskResponse,
   CustomerRecordResponse,
   DeliveryChecklistItemResponse,
   CustomerLedgerRowResponse,
   CustomerType,
+  MonthCloseSettlementBulkRequest,
+  MonthCloseSettlementBulkResponse,
   PaymentMode,
   ProductType,
   SaleResponse,
@@ -22,7 +27,14 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { shiftIsoDate, todayLocalISO } from "../../utils/date";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
-import { ReadOnlyBanner } from "../../../components/read-only-banner";
+import {
+  getPendingSyncSummary,
+  PendingSyncSummary,
+  queueSaleDeliveryUpdate,
+  queueSaleReconcileUpdate,
+  queueSaleSave,
+  shouldQueueForOffline,
+} from "../../utils/offline-sync";
 
 const CUSTOMER_TYPES: CustomerType[] = ["COOPERATIVE", "RETAIL", "INDIVIDUAL"];
 const PRODUCT_TYPES: ProductType[] = ["MILK", "GHEE", "CURD", "PANEER", "BUTTERMILK", "DUNG", "COMPOST"];
@@ -33,6 +45,7 @@ const DEFAULT_CUSTOMERS = [
   "Daily Subscription - Route B",
   "Shree Milk Cooperative",
 ];
+const ISO_MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const amount = (value: number) => `Rs ${value.toFixed(2)}`;
 
@@ -46,8 +59,29 @@ function paymentTone(status: SaleResponse["paymentStatus"]) {
   return { text: DairyColors.danger, background: DairyColors.dangerSoft };
 }
 
+function toIsoDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function monthRange(monthIso: string): { from: string; to: string } | null {
+  if (!ISO_MONTH_REGEX.test(monthIso)) {
+    return null;
+  }
+  const [yearText, monthText] = monthIso.split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  const from = new Date(year, monthIndex, 1);
+  const now = new Date();
+  const to =
+    year === now.getFullYear() && monthIndex === now.getMonth()
+      ? new Date(year, monthIndex, now.getDate())
+      : new Date(year, monthIndex + 1, 0);
+  return { from: toIsoDate(from), to: toIsoDate(to) };
+}
+
 export default function SalesScreen() {
-  const { hasAnyRole } = useAuth();
+  const router = useRouter();
+  const { user, hasAnyRole } = useAuth();
   const { x, label } = useI18n();
   const canManageSales = hasAnyRole("ADMIN", "MANAGER");
   const canDeliveryChecklist = hasAnyRole("ADMIN", "MANAGER", "WORKER", "DELIVERY");
@@ -55,6 +89,7 @@ export default function SalesScreen() {
 
   const [sales, setSales] = useState<SaleResponse[]>([]);
   const [deliveryItems, setDeliveryItems] = useState<DeliveryChecklistItemResponse[]>([]);
+  const [deliveryTasks, setDeliveryTasks] = useState<DeliveryTaskResponse[]>([]);
   const [customerRecords, setCustomerRecords] = useState<CustomerRecordResponse[]>([]);
   const [summary, setSummary] = useState<SalesSummaryResponse | null>(null);
   const [ledgerRows, setLedgerRows] = useState<CustomerLedgerRowResponse[]>([]);
@@ -91,9 +126,62 @@ export default function SalesScreen() {
   const [overrideWithdrawalLock, setOverrideWithdrawalLock] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const [notes, setNotes] = useState("");
+  const [statementMonth, setStatementMonth] = useState(todayLocalISO().slice(0, 7));
+  const [statementRows, setStatementRows] = useState<CustomerLedgerRowResponse[]>([]);
+  const [statementReconciliationRows, setStatementReconciliationRows] = useState<
+    SettlementReconciliationRowResponse[]
+  >([]);
+  const [statementLoading, setStatementLoading] = useState(false);
+  const [statementPayoutByCustomer, setStatementPayoutByCustomer] = useState<Record<string, string>>({});
+  const [statementClosingKey, setStatementClosingKey] = useState<string | null>(null);
+  const [statementBulkClosing, setStatementBulkClosing] = useState(false);
+  const [statementBulkPreviewing, setStatementBulkPreviewing] = useState(false);
+  const [statementBulkPreviewResult, setStatementBulkPreviewResult] = useState<MonthCloseSettlementBulkResponse | null>(
+    null
+  );
+  const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
+    total: 0,
+    deliveryTaskStatus: 0,
+    deliveryAddOn: 0,
+    deliveryTaskCreate: 0,
+    genericTaskStatus: 0,
+    milkSave: 0,
+    qcCowUpdate: 0,
+    qcBatchStatusUpdate: 0,
+    saleSave: 0,
+    saleDeliveryUpdate: 0,
+    saleReconcileUpdate: 0,
+    expenseSave: 0,
+    treatmentSave: 0,
+    feedBulkCreate: 0,
+    feedLogUpdate: 0,
+    deadLetter: 0,
+  });
 
   const customerTypeLabel = (type: CustomerType) => label("customerType", type);
   const productTypeLabel = (type: ProductType) => label("productType", type);
+  const statementRange = useMemo(() => monthRange(statementMonth), [statementMonth]);
+  const statementKey = useCallback((type: CustomerType, name: string) => `${type}::${name}`, []);
+  const statementBulkPreviewSummary = useMemo(() => {
+    if (!statementBulkPreviewResult) {
+      return null;
+    }
+    const totals = (statementBulkPreviewResult.results ?? []).reduce(
+      (acc, item) => {
+        acc.reconciled += item.reconciledSales ?? 0;
+        acc.payout += item.payoutRecorded ?? 0;
+        if (!item.success && acc.failures.length < 5) {
+          acc.failures.push({
+            customerName: item.customerName ?? "UNKNOWN",
+            message: item.message ?? "Failed",
+          });
+        }
+        return acc;
+      },
+      { reconciled: 0, payout: 0, failures: [] as { customerName: string; message: string }[] }
+    );
+    return totals;
+  }, [statementBulkPreviewResult]);
 
   const mergeCustomers = (current: string[], incoming: string[]) => {
     const next = new Set(current);
@@ -107,6 +195,10 @@ export default function SalesScreen() {
 
   const findCustomerRecordByName = useCallback(
     (name: string) => customerRecords.find((row) => row.customerName === name) ?? null,
+    [customerRecords]
+  );
+  const findCustomerRecordById = useCallback(
+    (id: string | null) => (id ? customerRecords.find((row) => row.customerId === id) ?? null : null),
     [customerRecords]
   );
 
@@ -133,6 +225,49 @@ export default function SalesScreen() {
       console.error(e);
     }
   }, []);
+
+  const loadMonthStatement = useCallback(async () => {
+    if (!canManageSales) {
+      setStatementRows([]);
+      setStatementReconciliationRows([]);
+      setStatementBulkPreviewResult(null);
+      return;
+    }
+    if (!statementRange) {
+      setStatementRows([]);
+      setStatementReconciliationRows([]);
+      setStatementBulkPreviewResult(null);
+      return;
+    }
+    try {
+      setStatementLoading(true);
+      const [ledger, reconciliation] = await Promise.all([
+        SalesApi.ledger(statementRange.from, statementRange.to),
+        SalesApi.reconciliation(statementRange.from, statementRange.to),
+      ]);
+      setStatementRows(ledger);
+      setStatementReconciliationRows(reconciliation);
+      setStatementBulkPreviewResult(null);
+      setStatementPayoutByCustomer((prev) => {
+        const next = { ...prev };
+        ledger.forEach((row) => {
+          const key = statementKey(row.customerType, row.customerName);
+          if (next[key] === undefined) {
+            next[key] = row.totalPending > 0 ? row.totalPending.toFixed(2) : "";
+          }
+        });
+        return next;
+      });
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Load failed", "लोड नहीं हुआ"),
+        e?.message ?? x("Could not load month-end statement.", "महीने का स्टेटमेंट लोड नहीं हुआ।")
+      );
+    } finally {
+      setStatementLoading(false);
+    }
+  }, [canManageSales, statementRange, statementKey, x]);
 
   const loadSales = useCallback(async () => {
     if (!canManageSales) {
@@ -174,12 +309,17 @@ export default function SalesScreen() {
   const loadDelivery = useCallback(async () => {
     if (!canDeliveryChecklist) {
       setDeliveryItems([]);
+      setDeliveryTasks([]);
       return;
     }
     try {
       setDeliveryLoading(true);
-      const rows = await SalesApi.deliveryList(dispatchDate);
+      const [rows, taskRows] = await Promise.all([
+        SalesApi.deliveryList(dispatchDate),
+        DeliveryTaskApi.list({ date: dispatchDate }),
+      ]);
       setDeliveryItems(rows);
+      setDeliveryTasks(taskRows);
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -203,17 +343,38 @@ export default function SalesScreen() {
     void loadCustomers();
   }, [loadCustomers]);
 
+  useEffect(() => {
+    void loadMonthStatement();
+  }, [loadMonthStatement]);
+
   const refreshAll = useCallback(() => {
     void loadSales();
     void loadDelivery();
     void loadCustomers();
-  }, [loadCustomers, loadDelivery, loadSales]);
+    void loadMonthStatement();
+  }, [loadCustomers, loadDelivery, loadMonthStatement, loadSales]);
+
+  const refreshPendingSync = useCallback(async () => {
+    setPendingSync(await getPendingSyncSummary());
+  }, []);
 
   const totalPreview = useMemo(() => {
     const q = Number(quantity);
     const up = Number(unitPrice);
     return Number.isFinite(q) && Number.isFinite(up) ? q * up : 0;
   }, [quantity, unitPrice]);
+
+  useEffect(() => {
+    void refreshPendingSync();
+  }, [refreshPendingSync]);
+
+  const salesPendingCount =
+    pendingSync.saleSave +
+    pendingSync.saleDeliveryUpdate +
+    pendingSync.saleReconcileUpdate +
+    pendingSync.deliveryTaskCreate +
+    pendingSync.deliveryTaskStatus +
+    pendingSync.deliveryAddOn;
 
   const isCooperativeMilk = customerType === "COOPERATIVE" && productType === "MILK";
 
@@ -247,6 +408,13 @@ export default function SalesScreen() {
   }, [isCooperativeMilk, quantity, fatPercent, snfPercent, fatRatePerKg, snfRatePerKg]);
 
   const totalPreviewDisplay = qualitySettlementPreview?.total ?? totalPreview;
+  const statementReconciliationByKey = useMemo(() => {
+    const map = new Map<string, SettlementReconciliationRowResponse>();
+    statementReconciliationRows.forEach((row) => {
+      map.set(statementKey(row.customerType, row.customerName), row);
+    });
+    return map;
+  }, [statementKey, statementReconciliationRows]);
 
   const addNewCustomer = async () => {
     if (!canManageSales) {
@@ -452,7 +620,7 @@ export default function SalesScreen() {
         await SalesApi.create(payload);
       }
       resetForm();
-      await loadSales();
+      await Promise.all([loadSales(), loadCustomers(), loadMonthStatement()]);
       Alert.alert(
         x("Saved", "सेव हो गया"),
         editingSaleId ? x("Sale updated.", "बिक्री अपडेट हो गई।") : x("Sale created.", "बिक्री जोड़ दी गई।")
@@ -501,6 +669,20 @@ export default function SalesScreen() {
             "Enter Fat%, SNF%, Fat rate and SNF rate together.",
             "Fat%, SNF%, Fat rate और SNF rate चारों साथ में भरें।"
           )
+        );
+      } else if (shouldQueueForOffline(e)) {
+        await queueSaleSave(
+          {
+            saleId: editingSaleId,
+            payload,
+          },
+          message
+        );
+        await refreshPendingSync();
+        resetForm();
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x("Sale is queued and will sync automatically.", "बिक्री कतार में है और अपने-आप सिंक होगी।")
         );
       } else {
         Alert.alert(x("Save failed", "सेव नहीं हुआ"), message);
@@ -567,15 +749,30 @@ export default function SalesScreen() {
 
     try {
       setDeliverySavingSaleId(row.saleId);
-      await SalesApi.updateDelivery(row.saleId, {
+      const payload = {
         delivered,
         deliveryNote: options?.deliveryNote ?? null,
         collectedAmount: parsedCollectedAmount,
-      });
+      };
+      await SalesApi.updateDelivery(row.saleId, payload);
       setDeliveryCollectedBySaleId((prev) => ({ ...prev, [row.saleId]: "" }));
       await loadDelivery();
     } catch (e: any) {
       console.error(e);
+      if (shouldQueueForOffline(e)) {
+        await queueSaleDeliveryUpdate(row.saleId, {
+          delivered,
+          deliveryNote: options?.deliveryNote ?? null,
+          collectedAmount: parsedCollectedAmount,
+        }, String(e?.message ?? ""));
+        await refreshPendingSync();
+        setDeliveryCollectedBySaleId((prev) => ({ ...prev, [row.saleId]: "" }));
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x("Delivery status update is queued and will sync automatically.", "डिलीवरी स्टेटस अपडेट कतार में है और अपने-आप सिंक होगा।")
+        );
+        return;
+      }
       Alert.alert(
         x("Save failed", "सेव नहीं हुआ"),
         e?.message ?? x("Could not update delivery status.", "डिलीवरी स्टेटस अपडेट नहीं हुआ।")
@@ -592,15 +789,339 @@ export default function SalesScreen() {
     try {
       setReconcilingSaleId(saleId);
       await SalesApi.reconcile(saleId, { reconciled });
-      await loadSales();
+      await Promise.all([loadSales(), loadMonthStatement()]);
     } catch (e: any) {
       console.error(e);
+      if (shouldQueueForOffline(e)) {
+        await queueSaleReconcileUpdate(saleId, { reconciled }, String(e?.message ?? ""));
+        await refreshPendingSync();
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x("Reconciliation update is queued and will sync automatically.", "रिकन्सिलिएशन अपडेट कतार में है और अपने-आप सिंक होगा।")
+        );
+        return;
+      }
       Alert.alert(
         x("Save failed", "सेव नहीं हुआ"),
         e?.message ?? x("Could not update reconciliation status.", "रिकन्सिलिएशन स्टेटस अपडेट नहीं हुआ।")
       );
     } finally {
       setReconcilingSaleId(null);
+    }
+  };
+
+  const closeMonthSettlement = async (row: CustomerLedgerRowResponse) => {
+    if (!canManageSales || !statementRange) {
+      return;
+    }
+    const key = statementKey(row.customerType, row.customerName);
+    const payoutRaw = (statementPayoutByCustomer[key] ?? row.totalPending.toFixed(2)).trim();
+    const payoutAmount = payoutRaw ? Number(payoutRaw) : 0;
+    const reconciliationRow = statementReconciliationRows.find(
+      (item) => item.customerType === row.customerType && item.customerName === row.customerName
+    );
+    const openReconciliations = reconciliationRow?.unreconciledTransactions ?? 0;
+    const shouldReconcile = row.customerType === "COOPERATIVE" && openReconciliations > 0;
+    const shouldPayout = payoutAmount > 0;
+    if (!shouldReconcile && !shouldPayout) {
+      Alert.alert(
+        x("Nothing to close", "बंद करने के लिए कुछ नहीं"),
+        x(
+          "Enter payout amount or pick a customer with pending cooperative reconciliations.",
+          "पेआउट राशि भरें या ऐसा ग्राहक चुनें जिसमें कोऑपरेटिव रिकन्सिलिएशन बाकी हो।"
+        )
+      );
+      return;
+    }
+    if (payoutRaw && (!Number.isFinite(payoutAmount) || payoutAmount < 0)) {
+      Alert.alert(
+        x("Invalid amount", "गलत राशि"),
+        x("Payout amount must be zero or a positive number.", "पेआउट राशि 0 या पॉजिटिव होनी चाहिए।")
+      );
+      return;
+    }
+    const customer = customerRecords.find(
+      (record) => record.customerType === row.customerType && record.customerName === row.customerName
+    );
+    if (shouldPayout && !customer) {
+      Alert.alert(
+        x("Customer not found", "ग्राहक नहीं मिला"),
+        x(
+          "Customer record is required to post payout.",
+          "पेआउट पोस्ट करने के लिए ग्राहक रिकॉर्ड जरूरी है।"
+        )
+      );
+      return;
+    }
+
+    const note = `Month close ${statementRange.from} to ${statementRange.to} | review checklist done`;
+    try {
+      setStatementClosingKey(key);
+      const result = await SalesApi.monthClose({
+        dateFrom: statementRange.from,
+        dateTo: statementRange.to,
+        customerType: row.customerType,
+        customerId: customer?.customerId ?? null,
+        customerName: row.customerName,
+        payoutAmount: shouldPayout ? payoutAmount : 0,
+        reconcileOpenCooperative: shouldReconcile,
+        note,
+      });
+      await Promise.all([loadCustomers(), loadSales(), loadMonthStatement()]);
+      Alert.alert(
+        x("Settlement closed", "सेटलमेंट बंद"),
+        x(
+          `Payout ${amount(Math.max(0, result.payoutRecorded ?? 0))} recorded. Reconciled ${result.reconciledSales ?? 0} sale(s).`,
+          `पेआउट ${amount(Math.max(0, result.payoutRecorded ?? 0))} दर्ज हुआ। ${result.reconciledSales ?? 0} बिक्री रिकन्साइल हुई।`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Close failed", "बंद नहीं हुआ"),
+        e?.message ?? x("Could not close month settlement.", "महीने का सेटलमेंट बंद नहीं हुआ।")
+      );
+    } finally {
+      setStatementClosingKey(null);
+    }
+  };
+
+  const buildMonthCloseBulkPayload = useCallback(() => {
+    if (!statementRange) {
+      return null;
+    }
+    const note = `Month close ${statementRange.from} to ${statementRange.to} | review checklist done`;
+    const missingPayoutCustomers: string[] = [];
+    const invalidPayoutCustomers: string[] = [];
+    const items = statementRows
+      .map((row) => {
+        const key = statementKey(row.customerType, row.customerName);
+        const recon = statementReconciliationByKey.get(key);
+        const openReconciliations = recon?.unreconciledTransactions ?? 0;
+        const shouldReconcile = row.customerType === "COOPERATIVE" && openReconciliations > 0;
+        const payoutRaw = (statementPayoutByCustomer[key] ?? row.totalPending.toFixed(2)).trim();
+        const payoutAmount = payoutRaw ? Number(payoutRaw) : 0;
+        const hasInvalidPayout = payoutRaw.length > 0 && (!Number.isFinite(payoutAmount) || payoutAmount < 0);
+        if (hasInvalidPayout) {
+          invalidPayoutCustomers.push(row.customerName);
+        }
+        const shouldPayout = !hasInvalidPayout && payoutAmount > 0;
+        const customer = customerRecords.find(
+          (record) => record.customerType === row.customerType && record.customerName === row.customerName
+        );
+        if (shouldPayout && !customer) {
+          missingPayoutCustomers.push(row.customerName);
+        }
+        return {
+          customerType: row.customerType,
+          customerId: customer?.customerId ?? null,
+          customerName: row.customerName,
+          payoutAmount: shouldPayout ? payoutAmount : 0,
+          reconcileOpenCooperative: shouldReconcile,
+          actionable: shouldReconcile || shouldPayout,
+        };
+      })
+      .filter((item) => item.actionable)
+      .map((item) => ({
+        customerType: item.customerType,
+        customerId: item.customerId,
+        customerName: item.customerName,
+        payoutAmount: item.payoutAmount,
+        reconcileOpenCooperative: item.reconcileOpenCooperative,
+      }));
+    const payload: MonthCloseSettlementBulkRequest = {
+      dateFrom: statementRange.from,
+      dateTo: statementRange.to,
+      note,
+      items,
+    };
+    return { payload, missingPayoutCustomers, invalidPayoutCustomers };
+  }, [
+    customerRecords,
+    statementKey,
+    statementPayoutByCustomer,
+    statementRange,
+    statementReconciliationByKey,
+    statementRows,
+  ]);
+
+  const closeMonthSettlementBulk = async () => {
+    if (!canManageSales) {
+      return;
+    }
+    const builtPayload = buildMonthCloseBulkPayload();
+    if (!builtPayload) {
+      return;
+    }
+    const { payload, missingPayoutCustomers, invalidPayoutCustomers } = builtPayload;
+    const previewMatchesCurrentPayload =
+      statementBulkPreviewResult?.dateFrom === payload.dateFrom &&
+      statementBulkPreviewResult?.dateTo === payload.dateTo &&
+      statementBulkPreviewResult?.requestedCount === payload.items.length;
+
+    if (invalidPayoutCustomers.length > 0) {
+      Alert.alert(
+        x("Invalid amount", "गलत राशि"),
+        x(
+          `Fix payout amount for: ${invalidPayoutCustomers.join(", ")}`,
+          `इन ग्राहकों के लिए पेआउट राशि ठीक करें: ${invalidPayoutCustomers.join(", ")}`
+        )
+      );
+      return;
+    }
+    if (missingPayoutCustomers.length > 0) {
+      Alert.alert(
+        x("Customer record missing", "ग्राहक रिकॉर्ड नहीं मिला"),
+        x(
+          `Cannot record payout for: ${missingPayoutCustomers.join(", ")}`,
+          `इनके लिए पेआउट रिकॉर्ड नहीं हो सकता: ${missingPayoutCustomers.join(", ")}`
+        )
+      );
+      return;
+    }
+    if (payload.items.length === 0) {
+      Alert.alert(
+        x("Nothing to close", "बंद करने के लिए कुछ नहीं"),
+        x(
+          "No payout or cooperative reconciliation pending for this month.",
+          "इस महीने के लिए न पेआउट बाकी है न कोऑपरेटिव रिकन्सिलिएशन।"
+        )
+      );
+      return;
+    }
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        x("Confirm close", "क्लोज़ की पुष्टि"),
+        previewMatchesCurrentPayload
+          ? x(
+              `Close ${payload.items.length} rows now? Preview failed ${statementBulkPreviewResult?.failedCount ?? 0} row(s).`,
+              `क्या अभी ${payload.items.length} पंक्तियां बंद करें? प्रीव्यू में ${statementBulkPreviewResult?.failedCount ?? 0} पंक्तियां असफल हैं।`
+            )
+          : x(
+              `Close ${payload.items.length} rows now without fresh preview?`,
+              `क्या ${payload.items.length} पंक्तियां बिना ताज़ा प्रीव्यू के बंद करें?`
+            ),
+        [
+          {
+            text: x("Cancel", "रद्द करें"),
+            style: "cancel",
+            onPress: () => resolve(false),
+          },
+          {
+            text: x("Close now", "अभी बंद करें"),
+            style: "destructive",
+            onPress: () => resolve(true),
+          },
+        ],
+        { cancelable: false }
+      );
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setStatementBulkClosing(true);
+      const result = await SalesApi.monthCloseBulk(payload);
+      await Promise.all([loadCustomers(), loadSales(), loadMonthStatement()]);
+      setStatementBulkPreviewResult(null);
+      const failedMessages = (result.results ?? [])
+        .filter((item) => !item.success)
+        .slice(0, 3)
+        .map((item) => `${item.customerName ?? "UNKNOWN"}: ${item.message ?? "Failed"}`)
+        .join("\n");
+      Alert.alert(
+        x("Bulk close completed", "बल्क क्लोज़ पूरा"),
+        x(
+          `Requested ${result.requestedCount}, Succeeded ${result.succeededCount}, Failed ${result.failedCount}${failedMessages ? `\n${failedMessages}` : ""}`,
+          `कुल ${result.requestedCount}, सफल ${result.succeededCount}, असफल ${result.failedCount}${failedMessages ? `\n${failedMessages}` : ""}`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Bulk close failed", "बल्क क्लोज़ असफल"),
+        e?.message ?? x("Could not close month in bulk.", "महीने का बल्क क्लोज़ नहीं हुआ।")
+      );
+    } finally {
+      setStatementBulkClosing(false);
+    }
+  };
+
+  const previewMonthSettlementBulk = async () => {
+    if (!canManageSales) {
+      return;
+    }
+    const builtPayload = buildMonthCloseBulkPayload();
+    if (!builtPayload) {
+      return;
+    }
+    const { payload, missingPayoutCustomers, invalidPayoutCustomers } = builtPayload;
+
+    if (invalidPayoutCustomers.length > 0) {
+      Alert.alert(
+        x("Invalid amount", "गलत राशि"),
+        x(
+          `Fix payout amount for: ${invalidPayoutCustomers.join(", ")}`,
+          `इन ग्राहकों के लिए पेआउट राशि ठीक करें: ${invalidPayoutCustomers.join(", ")}`
+        )
+      );
+      return;
+    }
+    if (missingPayoutCustomers.length > 0) {
+      Alert.alert(
+        x("Customer record missing", "ग्राहक रिकॉर्ड नहीं मिला"),
+        x(
+          `Cannot record payout for: ${missingPayoutCustomers.join(", ")}`,
+          `इनके लिए पेआउट रिकॉर्ड नहीं हो सकता: ${missingPayoutCustomers.join(", ")}`
+        )
+      );
+      return;
+    }
+    if (payload.items.length === 0) {
+      Alert.alert(
+        x("Nothing to preview", "प्रीव्यू के लिए कुछ नहीं"),
+        x(
+          "No payout or cooperative reconciliation pending for this month.",
+          "इस महीने के लिए न पेआउट बाकी है न कोऑपरेटिव रिकन्सिलिएशन।"
+        )
+      );
+      return;
+    }
+
+    try {
+      setStatementBulkPreviewing(true);
+      const result = await SalesApi.monthCloseBulkPreview(payload);
+      setStatementBulkPreviewResult(result);
+      const failedMessages = (result.results ?? [])
+        .filter((item) => !item.success)
+        .slice(0, 3)
+        .map((item) => `${item.customerName ?? "UNKNOWN"}: ${item.message ?? "Failed"}`)
+        .join("\n");
+      const previewReconciliations = (result.results ?? []).reduce(
+        (sum, item) => sum + (item.reconciledSales ?? 0),
+        0
+      );
+      const previewPayout = (result.results ?? []).reduce(
+        (sum, item) => sum + (item.payoutRecorded ?? 0),
+        0
+      );
+      Alert.alert(
+        x("Bulk preview ready", "बल्क प्रीव्यू तैयार"),
+        x(
+          `Rows ${result.requestedCount}, OK ${result.succeededCount}, Failed ${result.failedCount}\nReconciliations ${previewReconciliations}, Payout ${amount(previewPayout)}${failedMessages ? `\n${failedMessages}` : ""}`,
+          `पंक्तियां ${result.requestedCount}, ठीक ${result.succeededCount}, असफल ${result.failedCount}\nरिकन्सिलिएशन ${previewReconciliations}, पेआउट ${amount(previewPayout)}${failedMessages ? `\n${failedMessages}` : ""}`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      setStatementBulkPreviewResult(null);
+      Alert.alert(
+        x("Preview failed", "प्रीव्यू असफल"),
+        e?.message ?? x("Could not preview month close.", "महीने का प्रीव्यू नहीं हुआ।")
+      );
+    } finally {
+      setStatementBulkPreviewing(false);
     }
   };
 
@@ -637,6 +1158,122 @@ export default function SalesScreen() {
           backgroundColor: DairyColors.surfaceMuted,
         }}
       />
+
+      <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+        <Pressable
+          onPress={() => router.push("/delivery-ops")}
+          style={{
+            borderRadius: 10,
+            backgroundColor: DairyColors.primary,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+          }}
+        >
+          <Text style={{ color: "white", fontWeight: "800" }}>
+            {x("Open Delivery Ops", "डिलीवरी ऑप्स खोलें")}
+          </Text>
+        </Pressable>
+        <Pressable
+          disabled={deliveryLoading}
+          onPress={() => void loadDelivery()}
+          style={{
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            backgroundColor: DairyColors.surface,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {deliveryLoading ? x("Refreshing...", "रिफ्रेश हो रहा है...") : x("Refresh", "रिफ्रेश")}
+          </Text>
+        </Pressable>
+      </View>
+
+      <View
+        style={{
+          marginTop: 10,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          backgroundColor: DairyColors.surfaceMuted,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Delivery Tasks", "डिलीवरी टास्क")}
+        </Text>
+        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+          {x(
+            "Delivery actions have moved to Delivery Ops. This screen is read-only for delivery tasks.",
+            "डिलीवरी एक्शन अब Delivery Ops में हैं। यह स्क्रीन डिलीवरी टास्क के लिए सिर्फ देखने हेतु है।"
+          )}
+        </Text>
+        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+          {x(
+            `Current user: ${user?.username ?? "unknown"}`,
+            `वर्तमान यूज़र: ${user?.username ?? "unknown"}`
+          )}
+        </Text>
+
+        {deliveryTasks.length === 0 ? (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {deliveryLoading
+              ? x("Loading tasks...", "टास्क लोड हो रहे हैं...")
+              : x("No delivery tasks for selected date.", "चुनी हुई तारीख के लिए कोई डिलीवरी टास्क नहीं है।")}
+          </Text>
+        ) : (
+          deliveryTasks.map((task) => (
+            <View
+              key={task.deliveryTaskId}
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: task.status === "DELIVERED" ? DairyColors.success : DairyColors.border,
+                borderRadius: 10,
+                padding: 10,
+                backgroundColor: task.status === "DELIVERED" ? DairyColors.successSoft : DairyColors.surface,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {task.customerName}
+                {task.routeName ? ` | ${task.routeName}` : ""}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(`Shift: ${task.taskShift ?? "AM"}`, `शिफ्ट: ${task.taskShift ?? "AM"}`)}
+                {task.autoGenerated ? ` | ${x("Auto subscription", "ऑटो सब्सक्रिप्शन")}` : ""}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Assigned: ${task.assignedToUsername ?? "Unassigned"}`,
+                  `असाइन: ${task.assignedToUsername ?? "अनअसाइन्ड"}`
+                )}
+                {task.assignedByUsername ? ` | ${task.assignedByUsername}` : ""}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Planned ${task.plannedQtyLiters.toFixed(2)} L @ Rs ${task.unitPrice.toFixed(2)} | Delivered ${(task.deliveredQtyLiters ?? 0).toFixed(2)} L`,
+                  `योजना ${task.plannedQtyLiters.toFixed(2)} L @ रु ${task.unitPrice.toFixed(2)} | डिलीवर ${(task.deliveredQtyLiters ?? 0).toFixed(2)} L`
+                )}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(`Status: ${task.status}`, `स्टेटस: ${task.status}`)}
+                {task.completedBy ? ` | ${task.completedBy}` : ""}
+              </Text>
+              {task.saleId ? (
+                <Text style={{ marginTop: 2, color: DairyColors.info }}>
+                  {x(`Recorded Sale: ${task.saleId}`, `रिकॉर्डेड सेल: ${task.saleId}`)}
+                </Text>
+              ) : null}
+              {task.notes ? (
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{task.notes}</Text>
+              ) : null}
+
+            </View>
+          ))
+        )}
+      </View>
 
       {deliveryItems.length === 0 ? (
         <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
@@ -734,6 +1371,29 @@ export default function SalesScreen() {
     </View>
   );
 
+  const renderOfflineSyncStatus = () => (
+    <View
+      style={{
+        marginTop: 10,
+        borderWidth: 1,
+        borderColor: DairyColors.border,
+        borderRadius: 10,
+        backgroundColor: salesPendingCount > 0 ? DairyColors.warningSoft : DairyColors.successSoft,
+        padding: 10,
+      }}
+    >
+      <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+        {salesPendingCount > 0 ? x("Sales Sync Pending", "सेल्स सिंक बाकी") : x("Sales Synced", "सेल्स सिंक")}
+      </Text>
+      <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+        {x(
+          `Sale save ${pendingSync.saleSave} | Delivery ${pendingSync.saleDeliveryUpdate + pendingSync.deliveryTaskStatus} | Reconcile ${pendingSync.saleReconcileUpdate} | Dead letter ${pendingSync.deadLetter}`,
+          `सेल सेव ${pendingSync.saleSave} | डिलीवरी ${pendingSync.saleDeliveryUpdate + pendingSync.deliveryTaskStatus} | रिकन्सिलिएशन ${pendingSync.saleReconcileUpdate} | डेड लेटर ${pendingSync.deadLetter}`
+        )}
+      </Text>
+    </View>
+  );
+
   if (isDeliveryOnly) {
     return (
       <ScrollView
@@ -769,6 +1429,7 @@ export default function SalesScreen() {
             />
           </Pressable>
         </View>
+        {renderOfflineSyncStatus()}
         {renderDeliveryChecklist()}
       </ScrollView>
     );
@@ -809,6 +1470,8 @@ export default function SalesScreen() {
         </Pressable>
       </View>
 
+      {renderOfflineSyncStatus()}
+
       {canManageSales ? (
         <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <View style={{ flex: 1, minWidth: 140, backgroundColor: DairyColors.accentSoft, borderRadius: 12, padding: 10 }}>
@@ -824,12 +1487,6 @@ export default function SalesScreen() {
           <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{amount(summary?.totalPending ?? 0)}</Text>
         </View>
         </View>
-      ) : null}
-
-      {!canManageSales && !canDeliveryChecklist ? (
-        <ReadOnlyBanner
-          subtitle={x("Sales module is restricted for this role.", "इस रोल के लिए बिक्री मॉड्यूल उपलब्ध नहीं है।")}
-        />
       ) : null}
 
       {canDeliveryChecklist ? renderDeliveryChecklist() : null}
@@ -1437,6 +2094,294 @@ export default function SalesScreen() {
       ) : null}
 
       {canManageSales ? (
+        <View
+          style={{
+            marginTop: 14,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 14,
+            padding: 12,
+            backgroundColor: DairyColors.surface,
+          }}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "800", color: DairyColors.textPrimary, fontSize: 16 }}>
+                {x("Month-end Subscription Settlement", "महीने का सब्सक्रिप्शन सेटलमेंट")}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {statementRange
+                  ? x(
+                      `Range: ${statementRange.from} to ${statementRange.to}`,
+                      `रेंज: ${statementRange.from} से ${statementRange.to}`
+                    )
+                  : x("Set month in YYYY-MM format.", "महीना YYYY-MM फॉर्मेट में भरें।")}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => void loadMonthStatement()}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                backgroundColor: DairyColors.surfaceMuted,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name={statementLoading ? "sync-circle" : "refresh"} size={18} color={DairyColors.primary} />
+            </Pressable>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+            <TextInput
+              value={statementMonth}
+              onChangeText={(value) => {
+                setStatementMonth(value);
+                setStatementBulkPreviewResult(null);
+              }}
+              placeholder={x("Month (YYYY-MM)", "महीना (YYYY-MM)")}
+              placeholderTextColor="#99A99A"
+              style={{
+                flex: 1,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                padding: 10,
+                color: DairyColors.textPrimary,
+                backgroundColor: DairyColors.surfaceMuted,
+              }}
+            />
+            <Pressable
+              onPress={() => void loadMonthStatement()}
+              style={{
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                justifyContent: "center",
+                backgroundColor: DairyColors.primary,
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "800" }}>{x("Load", "लोड")}</Text>
+            </Pressable>
+          </View>
+
+          <View
+            style={{
+              marginTop: 8,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              backgroundColor: DairyColors.surfaceMuted,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+              {x("Close checklist", "क्लोज़ चेकलिस्ट")}
+            </Text>
+            <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+              {x("1. Review customer totals and pending amount.", "1. ग्राहक का कुल और बकाया रिव्यू करें।")}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                "2. Review cooperative open reconciliations.",
+                "2. कोऑपरेटिव के खुले रिकन्सिलिएशन रिव्यू करें।"
+              )}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                "3. Close month: reconcile + record payout.",
+                "3. महीना बंद करें: रिकन्साइल + पेआउट रिकॉर्ड।"
+              )}
+            </Text>
+          </View>
+
+          <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+            <Pressable
+              disabled={statementBulkPreviewing || statementBulkClosing || statementRows.length === 0}
+              onPress={() => void previewMonthSettlementBulk()}
+              style={{
+                flex: 1,
+                borderRadius: 10,
+                paddingVertical: 11,
+                alignItems: "center",
+                backgroundColor:
+                  statementBulkPreviewing || statementBulkClosing || statementRows.length === 0
+                    ? DairyColors.textSecondary
+                    : DairyColors.info,
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "800" }}>
+                {statementBulkPreviewing
+                  ? x("Previewing...", "प्रीव्यू हो रहा है...")
+                  : x("Preview Bulk Close", "बल्क क्लोज़ प्रीव्यू")}
+              </Text>
+            </Pressable>
+            <Pressable
+              disabled={statementBulkClosing || statementBulkPreviewing || statementRows.length === 0}
+              onPress={() => void closeMonthSettlementBulk()}
+              style={{
+                flex: 1,
+                borderRadius: 10,
+                paddingVertical: 11,
+                alignItems: "center",
+                backgroundColor:
+                  statementBulkClosing || statementBulkPreviewing || statementRows.length === 0
+                    ? DairyColors.textSecondary
+                    : DairyColors.primary,
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "800" }}>
+                {statementBulkClosing
+                  ? x("Closing all...", "सभी क्लोज़ हो रहे हैं...")
+                  : x("Close All Pending Rows", "सभी लंबित पंक्तियां बंद करें")}
+              </Text>
+            </Pressable>
+          </View>
+
+          {statementBulkPreviewResult && statementBulkPreviewSummary ? (
+            <View
+              style={{
+                marginTop: 8,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                backgroundColor: DairyColors.surfaceMuted,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {x("Latest bulk preview", "नवीनतम बल्क प्रीव्यू")}
+              </Text>
+              <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                {x(
+                  `Rows ${statementBulkPreviewResult.requestedCount} | OK ${statementBulkPreviewResult.succeededCount} | Failed ${statementBulkPreviewResult.failedCount}`,
+                  `पंक्तियां ${statementBulkPreviewResult.requestedCount} | ठीक ${statementBulkPreviewResult.succeededCount} | असफल ${statementBulkPreviewResult.failedCount}`
+                )}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Reconciliations ${statementBulkPreviewSummary.reconciled} | Payout ${amount(statementBulkPreviewSummary.payout)}`,
+                  `रिकन्सिलिएशन ${statementBulkPreviewSummary.reconciled} | पेआउट ${amount(statementBulkPreviewSummary.payout)}`
+                )}
+              </Text>
+              {statementBulkPreviewSummary.failures.length === 0 ? (
+                <Text style={{ marginTop: 4, color: DairyColors.success, fontWeight: "700" }}>
+                  {x("No failures in preview.", "प्रीव्यू में कोई असफलता नहीं।")}
+                </Text>
+              ) : (
+                <>
+                  <Text style={{ marginTop: 4, color: DairyColors.warning, fontWeight: "700" }}>
+                    {x("Top preview failures", "मुख्य प्रीव्यू असफलताएं")}
+                  </Text>
+                  {statementBulkPreviewSummary.failures.map((item, index) => (
+                    <Text
+                      key={`preview-fail-${index}-${item.customerName}`}
+                      style={{ marginTop: 2, color: DairyColors.textSecondary }}
+                    >
+                      {`${index + 1}. ${item.customerName}: ${item.message}`}
+                    </Text>
+                  ))}
+                </>
+              )}
+            </View>
+          ) : null}
+
+          {!statementRange ? (
+            <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+              {x("Use month format YYYY-MM.", "महीना YYYY-MM फॉर्मेट में डालें।")}
+            </Text>
+          ) : statementRows.length === 0 ? (
+            <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+              {statementLoading
+                ? x("Loading month statement...", "महीने का स्टेटमेंट लोड हो रहा है...")
+                : x("No month statement rows found.", "महीने के लिए कोई स्टेटमेंट रिकॉर्ड नहीं मिला।")}
+            </Text>
+          ) : (
+            statementRows.map((row) => {
+              const key = statementKey(row.customerType, row.customerName);
+              const recon = statementReconciliationByKey.get(key);
+              const openReconciliations = recon?.unreconciledTransactions ?? 0;
+              const payoutText = statementPayoutByCustomer[key] ?? "";
+              const payoutValue = payoutText.trim() ? Number(payoutText) : 0;
+              const canClose = openReconciliations > 0 || (Number.isFinite(payoutValue) && payoutValue > 0);
+              const isClosing = statementClosingKey === key;
+              return (
+                <View
+                  key={`statement-${key}`}
+                  style={{
+                    marginTop: 8,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    backgroundColor: DairyColors.surfaceMuted,
+                    padding: 10,
+                  }}
+                >
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                    {row.customerName} ({customerTypeLabel(row.customerType)})
+                  </Text>
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Amount ${amount(row.totalAmount)} | Received ${amount(row.totalReceived)} | Pending ${amount(row.totalPending)}`,
+                      `राशि ${amount(row.totalAmount)} | मिला ${amount(row.totalReceived)} | बाकी ${amount(row.totalPending)}`
+                    )}
+                  </Text>
+                  <Text style={{ marginTop: 2, color: openReconciliations > 0 ? DairyColors.warning : DairyColors.textSecondary }}>
+                    {x(
+                      `Cooperative reconciliations open: ${openReconciliations}`,
+                      `कोऑपरेटिव रिकन्सिलिएशन खुले: ${openReconciliations}`
+                    )}
+                  </Text>
+                  <View style={{ marginTop: 8, flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <TextInput
+                      value={payoutText}
+                      onChangeText={(value) => {
+                        setStatementBulkPreviewResult(null);
+                        setStatementPayoutByCustomer((prev) => ({
+                          ...prev,
+                          [key]: value,
+                        }));
+                      }}
+                      placeholder={x("Payout amount (optional)", "पेआउट राशि (वैकल्पिक)")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      style={{
+                        flex: 1,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 10,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surface,
+                      }}
+                    />
+                    <Pressable
+                      disabled={!canClose || isClosing}
+                      onPress={() => void closeMonthSettlement(row)}
+                      style={{
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        backgroundColor: !canClose || isClosing ? DairyColors.textSecondary : DairyColors.primary,
+                      }}
+                    >
+                      <Text style={{ color: "white", fontWeight: "800" }}>
+                        {isClosing
+                          ? x("Closing...", "बंद हो रहा है...")
+                          : x("Close Month", "महीना बंद करें")}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+      ) : null}
+
+      {canManageSales ? (
       <>
       <View
         style={{
@@ -1453,9 +2398,7 @@ export default function SalesScreen() {
         </Text>
         {ledgerRows.length === 0 ? (
           <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
-            {canManageSales
-              ? x("No ledger rows for selected date.", "चुनी हुई तारीख के लिए कोई हिसाब रिकॉर्ड नहीं है।")
-              : x("Only ADMIN can view revenue ledger.", "राजस्व हिसाब सिर्फ ADMIN देख सकता है।")}
+            {x("No ledger rows for selected date.", "चुनी हुई तारीख के लिए कोई हिसाब रिकॉर्ड नहीं है।")}
           </Text>
         ) : (
           ledgerRows.map((row) => (
@@ -1608,11 +2551,9 @@ export default function SalesScreen() {
         </Text>
         {sales.length === 0 ? (
           <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
-            {canManageSales
-              ? loading
-                ? x("Loading sales...", "बिक्री लोड हो रही है...")
-                : x("No sales found for selected date.", "चुनी हुई तारीख के लिए कोई बिक्री नहीं मिली।")
-              : x("Only ADMIN can view sales revenue records.", "बिक्री राजस्व रिकॉर्ड सिर्फ ADMIN देख सकता है।")}
+            {loading
+              ? x("Loading sales...", "बिक्री लोड हो रही है...")
+              : x("No sales found for selected date.", "चुनी हुई तारीख के लिए कोई बिक्री नहीं मिली।")}
           </Text>
         ) : (
           sales.map((item) => {

@@ -5,10 +5,12 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import {
   AnimalApi,
   AnimalResponse,
+  ExpenseApi,
   FeedApi,
   FeedLogResponse,
   HealthApi,
   MedicalTreatmentResponse,
+  SalesApi,
   MilkEntryApi,
   MilkEntryResponse,
   TreatmentApi,
@@ -21,9 +23,33 @@ import { useI18n } from "../../state/i18n";
 
 const liters = (value: number) => `${value.toFixed(2)} L`;
 const kg = (value: number) => `${value.toFixed(2)} kg`;
+const money = (value: number) => `Rs ${value.toFixed(2)}`;
+
+type AnimalProfitabilityEstimate = {
+  fromDate: string;
+  toDate: string;
+  avgMilkPrice: number;
+  animalMilkLiters: number;
+  animalFeedKg: number;
+  animalTreatmentCount: number;
+  estimatedRevenue: number;
+  estimatedFeedCost: number;
+  estimatedTreatmentCost: number;
+  estimatedTotalCost: number;
+  estimatedNet: number;
+  roiPercent: number | null;
+  feedCostPerKg: number;
+  treatmentCostPerCase: number;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  warnings: string[];
+};
 
 function normalizeRef(value?: string | null) {
   return (value ?? "").trim().toLowerCase();
+}
+
+function inIsoRange(value: string, fromDate: string, toDate: string) {
+  return value >= fromDate && value <= toDate;
 }
 
 function statusTone(status?: AnimalResponse["status"]) {
@@ -31,6 +57,16 @@ function statusTone(status?: AnimalResponse["status"]) {
   if (status === "DRY") return { text: DairyColors.warning, background: DairyColors.warningSoft };
   if (status === "SICK") return { text: DairyColors.danger, background: DairyColors.dangerSoft };
   return { text: DairyColors.info, background: DairyColors.infoSoft };
+}
+
+function confidenceTone(level: AnimalProfitabilityEstimate["confidence"]) {
+  if (level === "HIGH") {
+    return { text: DairyColors.success, background: DairyColors.successSoft };
+  }
+  if (level === "MEDIUM") {
+    return { text: DairyColors.warning, background: DairyColors.warningSoft };
+  }
+  return { text: DairyColors.danger, background: DairyColors.dangerSoft };
 }
 
 export default function AnimalDetailsScreen() {
@@ -53,6 +89,143 @@ export default function AnimalDetailsScreen() {
   const [allAnimals, setAllAnimals] = useState<AnimalResponse[]>([]);
   const [showAllMilkHistory, setShowAllMilkHistory] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [profitabilityLoading, setProfitabilityLoading] = useState(false);
+  const [profitability, setProfitability] = useState<AnimalProfitabilityEstimate | null>(null);
+
+  const loadProfitability = useCallback(
+    async (prefetched?: { herdAnimals?: AnimalResponse[]; animalMilkRows?: MilkEntryResponse[] }) => {
+      if (!resolvedAnimalId) {
+        return;
+      }
+      const fromDate = shiftIsoDate(today, -29);
+      try {
+        setProfitabilityLoading(true);
+        const [salesRows, expenseRows, feedRows, herdAnimals] = await Promise.all([
+          SalesApi.list(),
+          ExpenseApi.list(),
+          FeedApi.list(),
+          prefetched?.herdAnimals ? Promise.resolve(prefetched.herdAnimals) : AnimalApi.list(),
+        ]);
+
+        const milkRows =
+          prefetched?.animalMilkRows ??
+          (await MilkEntryApi.historyByAnimal(resolvedAnimalId, fromDate, today));
+        const milkRowsInRange = milkRows.filter((row) => inIsoRange(row.date, fromDate, today));
+        const animalMilkLiters = milkRowsInRange.reduce((sum, row) => sum + row.liters, 0);
+
+        const milkSalesInRange = salesRows.filter(
+          (row) =>
+            row.productType === "MILK" &&
+            inIsoRange(row.dispatchDate, fromDate, today) &&
+            Number.isFinite(row.quantity) &&
+            row.quantity > 0
+        );
+        const soldMilkQty = milkSalesInRange.reduce((sum, row) => sum + row.quantity, 0);
+        const soldMilkRevenue = milkSalesInRange.reduce((sum, row) => sum + row.totalAmount, 0);
+        const avgMilkPrice = soldMilkQty > 0 ? soldMilkRevenue / soldMilkQty : 0;
+
+        const expenseInRange = expenseRows.filter((row) => inIsoRange(row.expenseDate, fromDate, today));
+        const feedExpenseTotal = expenseInRange
+          .filter((row) => row.category === "FEED")
+          .reduce((sum, row) => sum + row.amount, 0);
+        const vetExpenseTotal = expenseInRange
+          .filter((row) => row.category === "VETERINARY")
+          .reduce((sum, row) => sum + row.amount, 0);
+
+        const feedRowsInRange = feedRows.filter((row) => inIsoRange(row.feedDate, fromDate, today));
+        const totalFeedKg = feedRowsInRange.reduce((sum, row) => sum + row.quantityKg, 0);
+        const animalFeedKg = feedRowsInRange
+          .filter((row) => row.animalId === resolvedAnimalId)
+          .reduce((sum, row) => sum + row.quantityKg, 0);
+        const feedCostPerKg = totalFeedKg > 0 ? feedExpenseTotal / totalFeedKg : 0;
+        const estimatedFeedCost = animalFeedKg * feedCostPerKg;
+
+        const treatmentCountsByAnimal = await Promise.all(
+          herdAnimals.map(async (row) => {
+            try {
+              const list = await TreatmentApi.list(row.animalId);
+              return {
+                animalId: row.animalId,
+                count: list.filter((item) => inIsoRange(item.treatmentDate, fromDate, today)).length,
+              };
+            } catch {
+              return { animalId: row.animalId, count: 0 };
+            }
+          })
+        );
+
+        const totalTreatmentCount = treatmentCountsByAnimal.reduce((sum, row) => sum + row.count, 0);
+        const animalTreatmentCount =
+          treatmentCountsByAnimal.find((row) => row.animalId === resolvedAnimalId)?.count ?? 0;
+        const treatmentCostPerCase = totalTreatmentCount > 0 ? vetExpenseTotal / totalTreatmentCount : 0;
+        const estimatedTreatmentCost = animalTreatmentCount * treatmentCostPerCase;
+
+        const estimatedRevenue = animalMilkLiters * avgMilkPrice;
+        const estimatedTotalCost = estimatedFeedCost + estimatedTreatmentCost;
+        const estimatedNet = estimatedRevenue - estimatedTotalCost;
+        const roiPercent =
+          estimatedTotalCost > 0 ? (estimatedNet / estimatedTotalCost) * 100 : estimatedRevenue > 0 ? 100 : null;
+
+        const warnings: string[] = [];
+        if (soldMilkQty <= 0) {
+          warnings.push(
+            x(
+              "No milk sale records found in this window; revenue estimate may be low.",
+              "इस अवधि में दूध बिक्री रिकॉर्ड नहीं मिला; आय का अनुमान कम हो सकता है।"
+            )
+          );
+        }
+        if (totalFeedKg <= 0 && feedExpenseTotal > 0) {
+          warnings.push(
+            x(
+              "Feed expense exists but feed quantity logs are missing.",
+              "फीड खर्च है लेकिन फीड मात्रा लॉग उपलब्ध नहीं हैं।"
+            )
+          );
+        }
+        if (totalTreatmentCount <= 0 && vetExpenseTotal > 0) {
+          warnings.push(
+            x(
+              "Veterinary expense exists but treatment records are missing.",
+              "वेट खर्च है लेकिन ट्रीटमेंट रिकॉर्ड उपलब्ध नहीं हैं।"
+            )
+          );
+        }
+
+        const confidence: AnimalProfitabilityEstimate["confidence"] =
+          soldMilkQty > 0 && totalFeedKg > 0 && totalTreatmentCount > 0
+            ? "HIGH"
+            : soldMilkQty > 0 && (totalFeedKg > 0 || totalTreatmentCount > 0)
+              ? "MEDIUM"
+              : "LOW";
+
+        setProfitability({
+          fromDate,
+          toDate: today,
+          avgMilkPrice,
+          animalMilkLiters,
+          animalFeedKg,
+          animalTreatmentCount,
+          estimatedRevenue,
+          estimatedFeedCost,
+          estimatedTreatmentCost,
+          estimatedTotalCost,
+          estimatedNet,
+          roiPercent,
+          feedCostPerKg,
+          treatmentCostPerCase,
+          confidence,
+          warnings,
+        });
+      } catch (e) {
+        console.error(e);
+        setProfitability(null);
+      } finally {
+        setProfitabilityLoading(false);
+      }
+    },
+    [resolvedAnimalId, today, x]
+  );
 
   const loadData = useCallback(async () => {
     if (!resolvedAnimalId) {
@@ -61,7 +234,7 @@ export default function AnimalDetailsScreen() {
 
     try {
       setLoading(true);
-      const fromDate = shiftIsoDate(today, -30);
+      const fromDate = shiftIsoDate(today, -29);
       // Load primary animal profile first so the details page still works
       // when optional sections (milk/feed/health) are unavailable.
       const animalRes = await AnimalApi.get(resolvedAnimalId);
@@ -76,12 +249,15 @@ export default function AnimalDetailsScreen() {
         TreatmentApi.list(resolvedAnimalId),
       ]);
 
-      setAllAnimals(animalsRes.status === "fulfilled" ? animalsRes.value : []);
-      setMilkHistory(milkRes.status === "fulfilled" ? milkRes.value : []);
+      const herdAnimals = animalsRes.status === "fulfilled" ? animalsRes.value : [];
+      const animalMilkRows = milkRes.status === "fulfilled" ? milkRes.value : [];
+      setAllAnimals(herdAnimals);
+      setMilkHistory(animalMilkRows);
       setTodayFeedLogs(feedRes.status === "fulfilled" ? feedRes.value : []);
       setVaccinations(vaccRes.status === "fulfilled" ? vaccRes.value : []);
       setDeworming(dewormRes.status === "fulfilled" ? dewormRes.value : []);
       setTreatments(treatmentRes.status === "fulfilled" ? treatmentRes.value : []);
+      void loadProfitability({ herdAnimals, animalMilkRows });
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -91,7 +267,7 @@ export default function AnimalDetailsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [resolvedAnimalId, today, x]);
+  }, [loadProfitability, resolvedAnimalId, today, x]);
 
   useEffect(() => {
     loadData();
@@ -138,6 +314,43 @@ export default function AnimalDetailsScreen() {
     [milkHistory, showAllMilkHistory]
   );
 
+  const profitabilityRecommendation = useMemo(() => {
+    if (!profitability) {
+      return x(
+        "Add more milk/feed/sales data for better profitability guidance.",
+        "बेहतर लाभ विश्लेषण के लिए दूध/फीड/बिक्री का और डेटा जोड़ें।"
+      );
+    }
+    if (animal?.status !== "LACTATING") {
+      return x(
+        "This estimate is most useful for lactating animals; use as reference for lifecycle cost.",
+        "यह अनुमान दुग्ध देने वाले जानवरों के लिए सबसे उपयोगी है; इसे जीवनचक्र लागत संदर्भ की तरह देखें।"
+      );
+    }
+    if (profitability.estimatedNet < 0 && milkSummary.avgPerDay < 5) {
+      return x(
+        "Negative contribution with low yield. Review ration and consider culling decision if trend continues.",
+        "कम उत्पादन के साथ नुकसान दिख रहा है। राशन समीक्षा करें और ट्रेंड जारी रहे तो culling निर्णय पर विचार करें।"
+      );
+    }
+    if (profitability.estimatedNet < 0) {
+      return x(
+        "Negative contribution. Review feed plan, health issues, and milk quality to improve margin.",
+        "नुकसान दिख रहा है। मार्जिन सुधारने के लिए फीड प्लान, स्वास्थ्य और दूध गुणवत्ता की समीक्षा करें।"
+      );
+    }
+    if (profitability.estimatedNet > 0 && milkSummary.avgPerDay >= 8) {
+      return x(
+        "Healthy contribution. Keep current plan and monitor for stability.",
+        "अच्छा योगदान दिख रहा है। वर्तमान योजना जारी रखें और स्थिरता मॉनिटर करें।"
+      );
+    }
+    return x(
+      "Contribution is positive but moderate. Track for 2-4 more weeks before major decisions.",
+      "योगदान सकारात्मक है लेकिन मध्यम है। बड़े निर्णय से पहले 2-4 सप्ताह और ट्रैक करें।"
+    );
+  }, [animal?.status, milkSummary.avgPerDay, profitability, x]);
+
   const resolveAnimalRef = useCallback(
     (reference?: string | null) => {
       const needle = normalizeRef(reference);
@@ -163,6 +376,7 @@ export default function AnimalDetailsScreen() {
   );
 
   const tone = statusTone(animal?.status);
+  const profitabilityConfidenceTone = profitability ? confidenceTone(profitability.confidence) : null;
 
   return (
     <ScrollView
@@ -423,6 +637,150 @@ export default function AnimalDetailsScreen() {
             {kg(todayFeedKg)}
           </Text>
         </View>
+      </View>
+
+      <View
+        style={{
+          marginTop: 12,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 14,
+          backgroundColor: DairyColors.surface,
+          padding: 12,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Profitability (30 days estimate)", "लाभ विश्लेषण (30 दिन अनुमान)")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {profitability
+            ? x(
+                `${profitability.fromDate} to ${profitability.toDate}`,
+                `${profitability.fromDate} से ${profitability.toDate}`
+              )
+            : x("Based on sales, feed, expense and treatment records.", "बिक्री, फीड, खर्च और ट्रीटमेंट रिकॉर्ड पर आधारित।")}
+        </Text>
+
+        {profitabilityLoading ? (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {x("Calculating estimate...", "अनुमान निकाला जा रहा है...")}
+          </Text>
+        ) : profitability ? (
+          <>
+            <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <View style={{ flex: 1, minWidth: 110, borderRadius: 10, backgroundColor: DairyColors.successSoft, padding: 9 }}>
+                <Text style={{ color: DairyColors.textSecondary }}>{x("Revenue", "आय")}</Text>
+                <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                  {money(profitability.estimatedRevenue)}
+                </Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 110, borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 9 }}>
+                <Text style={{ color: DairyColors.textSecondary }}>{x("Cost", "लागत")}</Text>
+                <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                  {money(profitability.estimatedTotalCost)}
+                </Text>
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 110,
+                  borderRadius: 10,
+                  backgroundColor: profitability.estimatedNet >= 0 ? DairyColors.successSoft : DairyColors.dangerSoft,
+                  padding: 9,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>{x("Net", "शुद्ध")}</Text>
+                <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                  {money(profitability.estimatedNet)}
+                </Text>
+              </View>
+            </View>
+
+            <View
+              style={{
+                marginTop: 10,
+                alignSelf: "flex-start",
+                borderRadius: 999,
+                backgroundColor: profitabilityConfidenceTone?.background ?? DairyColors.surfaceMuted,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+              }}
+            >
+              <Text style={{ color: profitabilityConfidenceTone?.text ?? DairyColors.textPrimary, fontWeight: "800" }}>
+                {x(
+                  `Confidence: ${profitability.confidence}`,
+                  `विश्वास स्तर: ${
+                    profitability.confidence === "HIGH"
+                      ? "उच्च"
+                      : profitability.confidence === "MEDIUM"
+                        ? "मध्यम"
+                        : "कम"
+                  }`
+                )}
+              </Text>
+            </View>
+
+            <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+              {x(
+                `Milk ${liters(profitability.animalMilkLiters)} @ ${money(profitability.avgMilkPrice)}/L`,
+                `दूध ${liters(profitability.animalMilkLiters)} @ ${money(profitability.avgMilkPrice)}/लीटर`
+              )}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                `Feed ${kg(profitability.animalFeedKg)} @ ${money(profitability.feedCostPerKg)}/kg = ${money(profitability.estimatedFeedCost)}`,
+                `फीड ${kg(profitability.animalFeedKg)} @ ${money(profitability.feedCostPerKg)}/किलो = ${money(profitability.estimatedFeedCost)}`
+              )}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                `Treatment ${profitability.animalTreatmentCount} case(s) @ ${money(profitability.treatmentCostPerCase)} = ${money(profitability.estimatedTreatmentCost)}`,
+                `ट्रीटमेंट ${profitability.animalTreatmentCount} केस @ ${money(profitability.treatmentCostPerCase)} = ${money(profitability.estimatedTreatmentCost)}`
+              )}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                `ROI: ${profitability.roiPercent == null ? "-" : `${profitability.roiPercent.toFixed(1)}%`}`,
+                `ROI: ${profitability.roiPercent == null ? "-" : `${profitability.roiPercent.toFixed(1)}%`}`
+              )}
+            </Text>
+
+            <View
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                backgroundColor: DairyColors.surfaceMuted,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {x("Recommendation", "सुझाव")}
+              </Text>
+              <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                {profitabilityRecommendation}
+              </Text>
+            </View>
+
+            {profitability.warnings.length > 0 ? (
+              <View style={{ marginTop: 8, gap: 5 }}>
+                {profitability.warnings.map((warning, idx) => (
+                  <Text key={`${warning}_${idx}`} style={{ color: DairyColors.warning }}>
+                    {warning}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {x(
+              "Profitability estimate is unavailable right now.",
+              "फिलहाल लाभ अनुमान उपलब्ध नहीं है।"
+            )}
+          </Text>
+        )}
       </View>
 
       <View

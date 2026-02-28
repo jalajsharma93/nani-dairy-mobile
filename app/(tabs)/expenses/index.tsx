@@ -10,9 +10,14 @@ import {
 } from "../../services/api";
 import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
+import {
+  getPendingSyncSummary,
+  PendingSyncSummary,
+  queueExpenseSave,
+  shouldQueueForOffline,
+} from "../../utils/offline-sync";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
-import { ReadOnlyBanner } from "../../../components/read-only-banner";
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   "SALARY",
@@ -40,6 +45,24 @@ export default function ExpensesScreen() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
+    total: 0,
+    deliveryTaskStatus: 0,
+    deliveryAddOn: 0,
+    deliveryTaskCreate: 0,
+    genericTaskStatus: 0,
+    milkSave: 0,
+    qcCowUpdate: 0,
+    qcBatchStatusUpdate: 0,
+    saleSave: 0,
+    saleDeliveryUpdate: 0,
+    saleReconcileUpdate: 0,
+    expenseSave: 0,
+    treatmentSave: 0,
+    feedBulkCreate: 0,
+    feedLogUpdate: 0,
+    deadLetter: 0,
+  });
 
   const [expenseDate, setExpenseDate] = useState(todayLocalISO());
   const [category, setCategory] = useState<ExpenseCategory>("SALARY");
@@ -89,9 +112,17 @@ export default function ExpensesScreen() {
     }
   }, [canManageExpenses, date, editingExpenseId, x]);
 
+  const refreshPendingSync = useCallback(async () => {
+    setPendingSync(await getPendingSyncSummary());
+  }, []);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    void refreshPendingSync();
+  }, [refreshPendingSync]);
 
   const saveExpense = async () => {
     if (!canManageExpenses) {
@@ -145,6 +176,30 @@ export default function ExpensesScreen() {
       );
     } catch (e: any) {
       console.error(e);
+      if (shouldQueueForOffline(e)) {
+        await queueExpenseSave(
+          {
+            expenseId: editingExpenseId,
+            payload: {
+              expenseDate: expenseDate.trim(),
+              category,
+              amount: value,
+              paymentMode,
+              counterparty: counterparty.trim() || null,
+              referenceNo: referenceNo.trim() || null,
+              notes: notes.trim() || null,
+            },
+          },
+          String(e?.message ?? "")
+        );
+        await refreshPendingSync();
+        resetForm();
+        Alert.alert(
+          x("Saved Offline", "ऑफलाइन सेव"),
+          x("Expense is queued and will sync automatically.", "खर्च कतार में है और अपने-आप सिंक होगा।")
+        );
+        return;
+      }
       Alert.alert(
         x("Save failed", "सेव नहीं हुआ"),
         e?.message ?? x("Could not save expense.", "खर्च सेव नहीं हो पाया।")
@@ -172,6 +227,7 @@ export default function ExpensesScreen() {
     () => expenses.reduce((sum, row) => sum + row.amount, 0),
     [expenses]
   );
+  const expensePendingCount = pendingSync.expenseSave;
 
   return (
     <ScrollView
@@ -220,14 +276,26 @@ export default function ExpensesScreen() {
         }}
       />
 
-      {!canManageExpenses ? (
-        <ReadOnlyBanner
-          subtitle={x(
-            "Expense and revenue controls are ADMIN only.",
-            "खर्च और राजस्व नियंत्रण सिर्फ ADMIN के लिए है।"
+      <View
+        style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 10,
+          backgroundColor: expensePendingCount > 0 ? DairyColors.warningSoft : DairyColors.successSoft,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {expensePendingCount > 0 ? x("Expense Sync Pending", "खर्च सिंक बाकी") : x("Expense Synced", "खर्च सिंक")}
+        </Text>
+        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+          {x(
+            `Queued expense saves ${pendingSync.expenseSave} | Dead letter ${pendingSync.deadLetter}`,
+            `कतार में खर्च सेव ${pendingSync.expenseSave} | डेड लेटर ${pendingSync.deadLetter}`
           )}
-        />
-      ) : null}
+        </Text>
+      </View>
 
       {canManageExpenses ? (
         <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
@@ -450,11 +518,9 @@ export default function ExpensesScreen() {
 
         {expenses.length === 0 ? (
           <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
-            {canManageExpenses
-              ? loading
-                ? x("Loading expenses...", "खर्चे लोड हो रहे हैं...")
-                : x("No expenses found for selected date.", "चुनी तारीख पर कोई खर्च नहीं मिला।")
-              : x("Only ADMIN can view expense entries.", "खर्च की एंट्री सिर्फ ADMIN देख सकता है।")}
+            {loading
+              ? x("Loading expenses...", "खर्चे लोड हो रहे हैं...")
+              : x("No expenses found for selected date.", "चुनी तारीख पर कोई खर्च नहीं मिला।")}
           </Text>
         ) : (
           expenses.map((item) => (

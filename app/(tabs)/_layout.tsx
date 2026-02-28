@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Redirect, Tabs } from "expo-router";
+import { Redirect, Tabs, usePathname } from "expo-router";
 import { View } from "react-native";
 import { DairyColors } from "../constants/dairy-theme";
 import { DairyTypography } from "../constants/typography";
@@ -29,6 +29,7 @@ function tabIcon(
 export default function TabLayout() {
   const { user, loading } = useAuth();
   const { t } = useI18n();
+  const pathname = usePathname();
 
   if (loading) {
     return null;
@@ -38,11 +39,54 @@ export default function TabLayout() {
     return <Redirect href="/login" />;
   }
 
+  const role = user.role;
   const isVet = user.role === "VET";
   const isDelivery = user.role === "DELIVERY";
   const isFeedManager = user.role === "FEED_MANAGER";
   const isOpsRole = user.role === "ADMIN" || user.role === "MANAGER" || user.role === "WORKER";
-  const showDashboard = isOpsRole;
+  const isAdmin = role === "ADMIN";
+  const canClinical = role === "ADMIN" || role === "MANAGER" || role === "VET";
+  const canSalesChecklist = isOpsRole || isDelivery;
+  const canDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY";
+  const canCustomerAccess = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
+  const canEmployeesAccess = role === "ADMIN" || role === "MANAGER";
+  const canStockAccess = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
+  const canTaskManager = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
+  const canWorklistAccess = role !== "DELIVERY" && role !== "VET";
+  const routeRoot = (() => {
+    const first = pathname.split("/").filter(Boolean)[0];
+    return first ?? "index";
+  })();
+  const routeAllowed = (() => {
+    if (routeRoot === "index") return true;
+    if (routeRoot === "animals") return isOpsRole;
+    if (routeRoot === "milk") return isOpsRole;
+    if (routeRoot === "feed") return isOpsRole || isFeedManager;
+    if (routeRoot === "qc") return isOpsRole;
+    if (routeRoot === "health") return canClinical;
+    if (routeRoot === "breeding") return canClinical;
+    if (routeRoot === "treatments") return canClinical;
+    if (routeRoot === "sales") return canSalesChecklist;
+    if (routeRoot === "delivery-ops") return canDeliveryOps;
+    if (routeRoot === "customers") return canCustomerAccess;
+    if (routeRoot === "employees") return canEmployeesAccess;
+    if (routeRoot === "expenses") return isAdmin;
+    if (routeRoot === "stock") return canStockAccess;
+    if (routeRoot === "tasks") return canTaskManager;
+    if (routeRoot === "users") return isAdmin;
+    if (routeRoot === "worklist") return canWorklistAccess;
+    if (routeRoot === "today-tasks") return true;
+    if (routeRoot === "services") return true;
+    if (routeRoot === "settings") return true;
+    if (routeRoot === "sync") return true;
+    if (routeRoot === "profile") return true;
+    return true;
+  })();
+  if (!routeAllowed) {
+    return <Redirect href="/services" />;
+  }
+
+  const showDashboard = true;
   const showAnimals = isOpsRole;
   const showMilk = isOpsRole;
   const showFeed = isOpsRole || isFeedManager;
@@ -172,9 +216,25 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="delivery-ops/index"
+        options={{
+          title: "Delivery Ops",
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
         name="expenses/index"
         options={{
           title: t("services.expensesTitle"),
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="stock/index"
+        options={{
+          title: "Stock Manager",
           href: null,
         }}
       />
@@ -208,6 +268,22 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="tasks/index"
+        options={{
+          title: "Task Manager",
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="today-tasks/index"
+        options={{
+          title: "Today Tasks",
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
         name="treatments/index"
         options={{
           title: t("tabs.treatments"),
@@ -230,6 +306,14 @@ export default function TabLayout() {
         name="settings/index"
         options={{
           title: t("tabs.settings"),
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="sync/index"
+        options={{
+          title: "Sync Center",
           href: null,
         }}
       />

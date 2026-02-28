@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Redirect } from "expo-router";
 import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { DairyColors } from "../../constants/dairy-theme";
 import {
@@ -245,19 +246,7 @@ export default function UsersScreen() {
   );
 
   if (!isAdmin) {
-    return (
-      <ScrollView
-        style={{ flex: 1, backgroundColor: DairyColors.background }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
-      >
-        <Text style={{ fontSize: 24, fontWeight: "800", color: DairyColors.textPrimary }}>
-          {x("User Management", "यूज़र प्रबंधन")}
-        </Text>
-        <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
-          {x("This screen is available for ADMIN only.", "यह स्क्रीन सिर्फ ADMIN के लिए है।")}
-        </Text>
-      </ScrollView>
-    );
+    return <Redirect href="/services" />;
   }
 
   return (

@@ -17,7 +17,6 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
 import { useAuth } from "../../state/auth";
-import { ReadOnlyBanner } from "../../../components/read-only-banner";
 
 const PREGNANCY_OPTIONS: BreedingPregnancyResult[] = ["PENDING", "PREGNANT", "NOT_PREGNANT"];
 const CALF_GENDER_OPTIONS: BreedingCalfGender[] = ["MALE", "FEMALE", "UNKNOWN"];
@@ -584,15 +583,6 @@ export default function BreedingScreen() {
           );
         })}
       </View>
-
-      {!canManageBreeding ? (
-        <ReadOnlyBanner
-          subtitle={x(
-            "Only ADMIN/MANAGER/VET can add or edit breeding records.",
-            "प्रजनन रिकॉर्ड जोड़ना/बदलना सिर्फ ADMIN/MANAGER/VET कर सकते हैं।"
-          )}
-        />
-      ) : null}
 
       <View
         style={{

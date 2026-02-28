@@ -4,6 +4,8 @@ import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native"
 import {
   AnimalApi,
   AnimalResponse,
+  AuthApi,
+  AuthUserResponse,
   FeedManagementApi,
   FeedManagementSummaryResponse,
   FeedMaterialCategory,
@@ -22,7 +24,14 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
 import { useAuth } from "../../state/auth";
-import { ReadOnlyBanner } from "../../../components/read-only-banner";
+import {
+  flushPendingSyncOperations,
+  getPendingSyncSummary,
+  PendingSyncSummary,
+  queueFeedBulkLogCreate,
+  queueFeedLogUpdate,
+  shouldQueueForOffline,
+} from "../../utils/offline-sync";
 
 const FEED_TYPES = ["Green Fodder", "Dry Fodder", "Concentrate", "Mineral Mix", "Silage", "Other"];
 const RATION_PHASES: FeedRationPhase[] = ["LACTATING", "PREGNANT", "DRY", "CALF", "SICK_RECOVERY"];
@@ -38,6 +47,9 @@ const MATERIAL_UNITS: FeedMaterialUnit[] = ["KG", "LITER", "BAG", "UNIT"];
 const TASK_PRIORITIES: FeedSopTaskPriority[] = ["HIGH", "MEDIUM", "LOW"];
 const TASK_STATUSES: FeedSopTaskStatus[] = ["PENDING", "IN_PROGRESS", "DONE"];
 const TASK_ASSIGNEES: UserRole[] = ["WORKER", "FEED_MANAGER", "MANAGER"];
+const TASK_FILTER_ALL = "__ALL__";
+const TASK_FILTER_MINE = "__MINE__";
+const TASK_FILTER_UNASSIGNED = "__UNASSIGNED__";
 type FeedEntryMode = "PER_COW" | "GROUP" | "ALL_ACTIVE";
 
 const kg = (value: number) => `${value.toFixed(2)} kg`;
@@ -56,7 +68,7 @@ function inferRationPhase(animal?: AnimalResponse | null): FeedRationPhase {
 }
 
 export default function FeedScreen() {
-  const { hasAnyRole } = useAuth();
+  const { user, hasAnyRole } = useAuth();
   const { x, t } = useI18n();
   const canAddFeed = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
   const canEditFeed = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
@@ -70,8 +82,27 @@ export default function FeedScreen() {
   const [logs, setLogs] = useState<FeedLogResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [loadingManagement, setLoadingManagement] = useState(false);
   const [savingManagement, setSavingManagement] = useState(false);
+  const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
+    total: 0,
+    deliveryTaskStatus: 0,
+    deliveryAddOn: 0,
+    deliveryTaskCreate: 0,
+    genericTaskStatus: 0,
+    milkSave: 0,
+    qcCowUpdate: 0,
+    qcBatchStatusUpdate: 0,
+    saleSave: 0,
+    saleDeliveryUpdate: 0,
+    saleReconcileUpdate: 0,
+    expenseSave: 0,
+    treatmentSave: 0,
+    feedBulkCreate: 0,
+    feedLogUpdate: 0,
+    deadLetter: 0,
+  });
 
   const [editingFeedLogId, setEditingFeedLogId] = useState<string | null>(null);
   const [feedDate, setFeedDate] = useState(todayLocalISO());
@@ -88,6 +119,7 @@ export default function FeedScreen() {
   const [materials, setMaterials] = useState<FeedMaterialResponse[]>([]);
   const [recipes, setRecipes] = useState<FeedRecipeResponse[]>([]);
   const [tasks, setTasks] = useState<FeedSopTaskResponse[]>([]);
+  const [assignableUsers, setAssignableUsers] = useState<AuthUserResponse[]>([]);
 
   const [materialName, setMaterialName] = useState("");
   const [materialCategory, setMaterialCategory] = useState<FeedMaterialCategory>("GREEN_FODDER");
@@ -114,6 +146,9 @@ export default function FeedScreen() {
   const [taskDetails, setTaskDetails] = useState("");
   const [taskPriority, setTaskPriority] = useState<FeedSopTaskPriority>("MEDIUM");
   const [taskAssignedRole, setTaskAssignedRole] = useState<UserRole>("WORKER");
+  const [taskAssignedToUsername, setTaskAssignedToUsername] = useState("");
+  const [taskFilterRole, setTaskFilterRole] = useState<UserRole | "ALL">("ALL");
+  const [taskFilterAssignee, setTaskFilterAssignee] = useState<string>(TASK_FILTER_ALL);
   const [taskDueTime, setTaskDueTime] = useState("");
 
   const feedTypeLabel = (type: string) => {
@@ -231,16 +266,18 @@ export default function FeedScreen() {
   const loadManagement = async () => {
     try {
       setLoadingManagement(true);
-      const [summaryRes, materialRows, recipeRows, taskRows] = await Promise.all([
+      const [summaryRes, materialRows, recipeRows, taskRows, userRows] = await Promise.all([
         FeedManagementApi.summary(date),
         FeedManagementApi.listMaterials(),
         FeedManagementApi.listRecipes({ activeOnly: true }),
-        FeedManagementApi.listTasks({ date, assignedRole: isWorkerChecklistOnly ? "WORKER" : undefined }),
+        FeedManagementApi.listTasks({ date }),
+        canManageFeedManagement ? AuthApi.listAssignableUsers(TASK_ASSIGNEES) : Promise.resolve([] as AuthUserResponse[]),
       ]);
       setManagementSummary(summaryRes);
       setMaterials(materialRows);
       setRecipes(recipeRows);
       setTasks(taskRows);
+      setAssignableUsers(userRows);
       if (!stockAdjustMaterialId && materialRows.length > 0) {
         setStockAdjustMaterialId(materialRows[0].feedMaterialId);
       }
@@ -255,11 +292,19 @@ export default function FeedScreen() {
     }
   };
 
+  const refreshPendingSync = useCallback(async () => {
+    setPendingSync(await getPendingSyncSummary());
+  }, []);
+
   useEffect(() => {
     loadData();
     loadManagement();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, filterAnimalId]);
+  }, [date, filterAnimalId, user?.username, canManageFeedManagement]);
+
+  useEffect(() => {
+    void refreshPendingSync();
+  }, [refreshPendingSync]);
 
   const resetForm = () => {
     setEditingFeedLogId(null);
@@ -332,18 +377,15 @@ export default function FeedScreen() {
           return;
         }
 
-        await Promise.all(
-          targets.map((target) =>
-            FeedApi.create({
-              feedDate,
-              animalId: target.animalId,
-              feedType,
-              rationPhase: feedEntryMode === "GROUP" ? groupPhase : animalPhase(target),
-              quantityKg: quantityPerAnimal,
-              notes: notes.trim() || null,
-            })
-          )
-        );
+        const createPayloads = targets.map((target) => ({
+          feedDate,
+          animalId: target.animalId,
+          feedType,
+          rationPhase: feedEntryMode === "GROUP" ? groupPhase : animalPhase(target),
+          quantityKg: quantityPerAnimal,
+          notes: notes.trim() || null,
+        }));
+        await Promise.all(createPayloads.map((payload) => FeedApi.create(payload)));
       }
 
       resetForm();
@@ -361,6 +403,54 @@ export default function FeedScreen() {
       );
     } catch (e: any) {
       console.error(e);
+      if (shouldQueueForOffline(e)) {
+        try {
+          let queued = false;
+          if (editingFeedLogId && animalId) {
+            const payload = {
+              feedDate,
+              animalId,
+              feedType,
+              rationPhase,
+              quantityKg: quantity,
+              notes: notes.trim() || null,
+            };
+            await queueFeedLogUpdate(editingFeedLogId, payload, String(e?.message ?? ""));
+            queued = true;
+          } else {
+            const targets = targetAnimalsForEntry;
+            if (targets.length > 0) {
+              const quantityPerAnimal = feedEntryMode === "PER_COW" ? quantity : quantity / targets.length;
+              if (Number.isFinite(quantityPerAnimal) && quantityPerAnimal > 0) {
+                const createPayloads = targets.map((target) => ({
+                  feedDate,
+                  animalId: target.animalId,
+                  feedType,
+                  rationPhase: feedEntryMode === "GROUP" ? groupPhase : animalPhase(target),
+                  quantityKg: quantityPerAnimal,
+                  notes: notes.trim() || null,
+                }));
+                await queueFeedBulkLogCreate(createPayloads, String(e?.message ?? ""));
+                queued = true;
+              }
+            }
+          }
+          if (queued) {
+            resetForm();
+            await refreshPendingSync();
+            Alert.alert(
+              x("Saved Offline", "ऑफलाइन सेव"),
+              x(
+                "Network unavailable. Feed save is queued and will sync automatically.",
+                "नेटवर्क उपलब्ध नहीं है। फीड सेव कतार में है और अपने-आप सिंक होगा।"
+              )
+            );
+            return;
+          }
+        } catch (queueError) {
+          console.error(queueError);
+        }
+      }
       Alert.alert(
         x("Save failed", "सेव नहीं हुआ"),
         e?.message ?? x("Could not save feed log.", "चारा रिकॉर्ड सेव नहीं हो पाया।")
@@ -557,12 +647,14 @@ export default function FeedScreen() {
         title: taskTitle.trim(),
         details: taskDetails.trim() || null,
         assignedRole: taskAssignedRole,
+        assignedToUsername: taskAssignedToUsername || null,
         priority: taskPriority,
         dueTime: taskDueTime.trim() || null,
       });
       setTaskTitle("");
       setTaskDetails("");
       setTaskDueTime("");
+      setTaskAssignedToUsername("");
       await loadManagement();
       Alert.alert(x("Saved", "सेव हो गया"), x("SOP task added.", "SOP टास्क जोड़ दिया गया।"));
     } catch (e: any) {
@@ -688,24 +780,104 @@ export default function FeedScreen() {
     };
   }, [animalMap, logs]);
 
-  const workerChecklistTasks = useMemo(
+  const usersForSelectedTaskRole = useMemo(
     () =>
-      tasks
-        .filter((task) => task.assignedRole === "WORKER")
-        .sort((a, b) => (a.dueTime ?? "").localeCompare(b.dueTime ?? "")),
-    [tasks]
+      assignableUsers
+        .filter((row) => row.role === taskAssignedRole && row.active)
+        .sort((a, b) => a.username.localeCompare(b.username)),
+    [assignableUsers, taskAssignedRole]
+  );
+
+  const taskFilterUsers = useMemo(() => {
+    const rows = assignableUsers.filter((row) => row.active);
+    if (taskFilterRole === "ALL") {
+      return rows.sort((a, b) => a.username.localeCompare(b.username));
+    }
+    return rows
+      .filter((row) => row.role === taskFilterRole)
+      .sort((a, b) => a.username.localeCompare(b.username));
+  }, [assignableUsers, taskFilterRole]);
+
+  useEffect(() => {
+    if (!taskAssignedToUsername) {
+      return;
+    }
+    const stillPresent = usersForSelectedTaskRole.some((row) => row.username === taskAssignedToUsername);
+    if (!stillPresent) {
+      setTaskAssignedToUsername("");
+    }
+  }, [taskAssignedToUsername, usersForSelectedTaskRole]);
+
+  useEffect(() => {
+    if (taskFilterAssignee === TASK_FILTER_ALL || taskFilterAssignee === TASK_FILTER_MINE || taskFilterAssignee === TASK_FILTER_UNASSIGNED) {
+      return;
+    }
+    const stillPresent = taskFilterUsers.some((row) => row.username === taskFilterAssignee);
+    if (!stillPresent) {
+      setTaskFilterAssignee(TASK_FILTER_ALL);
+    }
+  }, [taskFilterAssignee, taskFilterUsers]);
+
+  const visibleTasks = useMemo(() => {
+    let rows = [...tasks];
+    if (!isWorkerChecklistOnly) {
+      if (taskFilterRole !== "ALL") {
+        rows = rows.filter((task) => task.assignedRole === taskFilterRole);
+      }
+      if (taskFilterAssignee === TASK_FILTER_MINE) {
+        const me = (user?.username ?? "").toLowerCase();
+        rows = rows.filter((task) => (task.assignedToUsername ?? "").toLowerCase() === me);
+      } else if (taskFilterAssignee === TASK_FILTER_UNASSIGNED) {
+        rows = rows.filter((task) => !task.assignedToUsername);
+      } else if (taskFilterAssignee !== TASK_FILTER_ALL) {
+        rows = rows.filter(
+          (task) => (task.assignedToUsername ?? "").toLowerCase() === taskFilterAssignee.toLowerCase()
+        );
+      }
+    }
+    return rows.sort((a, b) => (a.dueTime ?? "").localeCompare(b.dueTime ?? ""));
+  }, [isWorkerChecklistOnly, taskFilterAssignee, taskFilterRole, tasks, user?.username]);
+
+  const workerChecklistTasks = useMemo(
+    () => visibleTasks.filter((task) => task.assignedRole === "WORKER"),
+    [visibleTasks]
   );
 
   const preparationTasks = useMemo(
-    () =>
-      tasks
-        .filter((task) => task.status !== "DONE")
-        .sort((a, b) => (a.dueTime ?? "").localeCompare(b.dueTime ?? "")),
-    [tasks]
+    () => visibleTasks.filter((task) => task.status !== "DONE"),
+    [visibleTasks]
   );
 
   const refreshAll = async () => {
     await Promise.all([loadData(), loadManagement()]);
+  };
+
+  const syncPending = async () => {
+    try {
+      setSyncing(true);
+      const result = await flushPendingSyncOperations();
+      await refreshPendingSync();
+      await refreshAll();
+      if (result.processed === 0) {
+        Alert.alert(x("No pending sync", "कोई पेंडिंग सिंक नहीं"), x("All operations are already synced.", "सभी ऑपरेशन पहले से सिंक हैं।"));
+        return;
+      }
+      Alert.alert(
+        x("Sync complete", "सिंक पूरा"),
+        x(
+          `Processed ${result.processed} | Synced ${result.success} | Remaining ${result.remaining}`,
+          `प्रोसेस ${result.processed} | सिंक ${result.success} | बाकी ${result.remaining}`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Sync failed", "सिंक असफल"),
+        e?.message ?? x("Could not sync pending operations.", "पेंडिंग ऑपरेशन सिंक नहीं हुए।")
+      );
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (
@@ -810,6 +982,45 @@ export default function FeedScreen() {
 
             <View
               style={{
+                marginTop: 10,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 12,
+                backgroundColor: pendingSync.feedBulkCreate + pendingSync.feedLogUpdate > 0 ? DairyColors.warningSoft : DairyColors.successSoft,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {pendingSync.feedBulkCreate + pendingSync.feedLogUpdate > 0
+                  ? x("Feed Sync Pending", "फीड सिंक बाकी")
+                  : x("Feed Synced", "फीड सिंक")}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Create pending ${pendingSync.feedBulkCreate} | Update pending ${pendingSync.feedLogUpdate} | Dead letter ${pendingSync.deadLetter}`,
+                  `नया रिकॉर्ड बाकी ${pendingSync.feedBulkCreate} | अपडेट बाकी ${pendingSync.feedLogUpdate} | डेड लेटर ${pendingSync.deadLetter}`
+                )}
+              </Text>
+              <Pressable
+                onPress={() => void syncPending()}
+                disabled={syncing}
+                style={{
+                  marginTop: 8,
+                  alignSelf: "flex-start",
+                  borderRadius: 10,
+                  backgroundColor: syncing ? DairyColors.textSecondary : DairyColors.primary,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: "800" }}>
+                  {syncing ? x("Syncing...", "सिंक हो रहा है...") : x("Sync Pending Now", "अभी सिंक करें")}
+                </Text>
+              </Pressable>
+            </View>
+
+            <View
+              style={{
                 marginTop: 12,
                 borderWidth: 1,
                 borderColor: DairyColors.border,
@@ -869,30 +1080,6 @@ export default function FeedScreen() {
                 {x("Dry: fiber-rich diet, avoid overfeeding concentrate.", "सूखा: रेशेदार आहार, कंसंट्रेट ज़्यादा न दें।")}
               </Text>
             </View>
-
-            {!canAddFeed ? <ReadOnlyBanner subtitle={t("common.manageRestricted")} /> : null}
-
-            {canAddFeed && !canEditFeed ? (
-              <View
-                style={{
-                  marginTop: 12,
-                  borderRadius: 12,
-                  backgroundColor: DairyColors.infoSoft,
-                  padding: 10,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <Ionicons name="information-circle" size={16} color={DairyColors.info} />
-                <Text style={{ color: DairyColors.info }}>
-                  {x(
-                    "You can add feed logs. Edit is for ADMIN/MANAGER/FEED_MANAGER.",
-                    "आप चारा रिकॉर्ड जोड़ सकते हैं। बदलाव सिर्फ ADMIN/MANAGER/FEED_MANAGER कर सकता है।"
-                  )}
-                </Text>
-              </View>
-            ) : null}
 
             {canAddFeed ? (
               <View
@@ -1576,9 +1763,7 @@ export default function FeedScreen() {
                         </Text>
                       </Pressable>
                     </>
-                  ) : (
-                    <ReadOnlyBanner subtitle={t("common.manageRestricted")} />
-                  )}
+                  ) : null}
                 </>
               ) : null}
 
@@ -1832,6 +2017,9 @@ export default function FeedScreen() {
                               {x("Time", "समय")}: {task.dueTime ?? x("Not set", "सेट नहीं")} | {x("Assigned", "सौंपा गया")}:
                               {" "}{roleLabel(task.assignedRole)} | {x("Status", "स्थिति")}: {taskStatusLabel(task.status)}
                             </Text>
+                            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                              {x("User", "यूज़र")}: {task.assignedToUsername ?? x("Unassigned", "अनअसाइन्ड")}
+                            </Text>
                             {task.details ? (
                               <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{task.details}</Text>
                             ) : null}
@@ -1841,12 +2029,126 @@ export default function FeedScreen() {
                     </>
                   )}
 
-                  {tasks.length === 0 ? (
+                  {!isWorkerChecklistOnly && canManageFeedManagement ? (
+                    <View
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 8,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                    >
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                        {x("Task Manager Filters", "टास्क मैनेजर फ़िल्टर")}
+                      </Text>
+                      <Text style={{ marginTop: 6, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                        {x("Role", "भूमिका")}
+                      </Text>
+                      <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        <Pressable
+                          onPress={() => setTaskFilterRole("ALL")}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: taskFilterRole === "ALL" ? DairyColors.primary : DairyColors.border,
+                            backgroundColor: taskFilterRole === "ALL" ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{x("All", "सभी")}</Text>
+                        </Pressable>
+                        {TASK_ASSIGNEES.map((role) => (
+                          <Pressable
+                            key={`filter-role-${role}`}
+                            onPress={() => setTaskFilterRole(role)}
+                            style={{
+                              borderWidth: 1,
+                              borderColor: taskFilterRole === role ? DairyColors.primary : DairyColors.border,
+                              backgroundColor: taskFilterRole === role ? DairyColors.primarySoft : DairyColors.surface,
+                              borderRadius: 999,
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{roleLabel(role)}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+
+                      <Text style={{ marginTop: 8, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                        {x("User", "यूज़र")}
+                      </Text>
+                      <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        <Pressable
+                          onPress={() => setTaskFilterAssignee(TASK_FILTER_ALL)}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: taskFilterAssignee === TASK_FILTER_ALL ? DairyColors.primary : DairyColors.border,
+                            backgroundColor: taskFilterAssignee === TASK_FILTER_ALL ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{x("All", "सभी")}</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => setTaskFilterAssignee(TASK_FILTER_MINE)}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: taskFilterAssignee === TASK_FILTER_MINE ? DairyColors.primary : DairyColors.border,
+                            backgroundColor: taskFilterAssignee === TASK_FILTER_MINE ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{x("Mine", "मेरे")}</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => setTaskFilterAssignee(TASK_FILTER_UNASSIGNED)}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: taskFilterAssignee === TASK_FILTER_UNASSIGNED ? DairyColors.primary : DairyColors.border,
+                            backgroundColor: taskFilterAssignee === TASK_FILTER_UNASSIGNED ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x("Unassigned", "अनअसाइन्ड")}
+                          </Text>
+                        </Pressable>
+                        {taskFilterUsers.map((row) => (
+                          <Pressable
+                            key={`filter-user-${row.username}`}
+                            onPress={() => setTaskFilterAssignee(row.username)}
+                            style={{
+                              borderWidth: 1,
+                              borderColor: taskFilterAssignee === row.username ? DairyColors.primary : DairyColors.border,
+                              backgroundColor: taskFilterAssignee === row.username ? DairyColors.primarySoft : DairyColors.surface,
+                              borderRadius: 999,
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{row.username}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {visibleTasks.length === 0 ? (
                     <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
                       {x("No SOP tasks for selected date.", "चुनी तारीख पर कोई SOP टास्क नहीं है।")}
                     </Text>
                   ) : (
-                    tasks.map((task) => (
+                    visibleTasks.map((task) => (
                       <View
                         key={task.feedTaskId}
                         style={{
@@ -1861,6 +2163,10 @@ export default function FeedScreen() {
                         <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{task.title}</Text>
                         <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                           {task.taskDate} | {x("Time", "समय")}: {task.dueTime ?? x("Not set", "सेट नहीं")} | {roleLabel(task.assignedRole)} | {taskPriorityLabel(task.priority)}
+                        </Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x("Assigned user", "सौंपा गया यूज़र")}: {task.assignedToUsername ?? x("Unassigned", "अनअसाइन्ड")}
+                          {task.assignedByUsername ? ` | ${x("by", "द्वारा")}: ${task.assignedByUsername}` : ""}
                         </Text>
                         {task.details ? (
                           <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{task.details}</Text>
@@ -1981,6 +2287,45 @@ export default function FeedScreen() {
                             }}
                           >
                             <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{roleLabel(role)}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+
+                      <Text style={{ marginTop: 8, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                        {x("Specific User (optional)", "खास यूज़र (वैकल्पिक)")}
+                      </Text>
+                      <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        <Pressable
+                          onPress={() => setTaskAssignedToUsername("")}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: taskAssignedToUsername === "" ? DairyColors.primary : DairyColors.border,
+                            backgroundColor: taskAssignedToUsername === "" ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x("Unassigned", "अनअसाइन्ड")}
+                          </Text>
+                        </Pressable>
+                        {usersForSelectedTaskRole.map((row) => (
+                          <Pressable
+                            key={`assignee-${row.username}`}
+                            onPress={() => setTaskAssignedToUsername(row.username)}
+                            style={{
+                              borderWidth: 1,
+                              borderColor: taskAssignedToUsername === row.username ? DairyColors.primary : DairyColors.border,
+                              backgroundColor: taskAssignedToUsername === row.username ? DairyColors.primarySoft : DairyColors.surface,
+                              borderRadius: 999,
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                              {row.username}
+                            </Text>
                           </Pressable>
                         ))}
                       </View>

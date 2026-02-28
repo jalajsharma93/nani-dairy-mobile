@@ -1,3 +1,4 @@
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { DairyColors } from "../../constants/dairy-theme";
@@ -7,6 +8,7 @@ import { AppLanguage, useI18n } from "../../state/i18n";
 const LANGUAGES: AppLanguage[] = ["en", "hi"];
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { language, setLanguage, t, x } = useI18n();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -117,6 +119,41 @@ export default function SettingsScreen() {
             );
           })}
         </View>
+      </View>
+
+      <View
+        style={{
+          marginTop: 14,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 14,
+          backgroundColor: DairyColors.surface,
+          padding: 12,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Sync Center", "सिंक सेंटर")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x("Monitor and recover offline queue operations.", "ऑफलाइन कतार ऑपरेशन मॉनिटर और रिकवर करें।")}
+        </Text>
+
+        <Pressable
+          onPress={() => router.push("/sync")}
+          style={{
+            marginTop: 10,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            backgroundColor: DairyColors.surfaceMuted,
+            paddingVertical: 11,
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Open Sync Center", "सिंक सेंटर खोलें")}
+          </Text>
+        </Pressable>
       </View>
 
       <View
