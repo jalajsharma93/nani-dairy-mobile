@@ -15,6 +15,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
 import { shiftIsoDate, todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
+import { DateInput } from "../../../components/date-input";
 import {
   getPendingSyncSummary,
   PendingSyncSummary,
@@ -784,36 +785,19 @@ export default function TreatmentsScreen() {
         </Text>
 
         <View style={{ marginTop: 8 }}>
-          <TextInput
+          <DateInput
             value={treatmentDate}
             onChangeText={setTreatmentDate}
             placeholder={x("Treatment Date (YYYY-MM-DD)", "ट्रीटमेंट तारीख (YYYY-MM-DD)")}
-            placeholderTextColor="#99A99A"
-            style={{
-              borderWidth: 1,
-              borderColor: DairyColors.border,
-              borderRadius: 10,
-              padding: 10,
-              color: DairyColors.textPrimary,
-              backgroundColor: DairyColors.surfaceMuted,
-            }}
           />
           <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
-            <TextInput
+            <View style={{ flex: 1 }}>
+              <DateInput
               value={followUpDate}
               onChangeText={setFollowUpDate}
               placeholder={x("Follow-up (YYYY-MM-DD)", "फॉलो-अप (YYYY-MM-DD)")}
-              placeholderTextColor="#99A99A"
-              style={{
-                flex: 1,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 10,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surfaceMuted,
-              }}
-            />
+              />
+            </View>
             <Pressable
               onPress={() => applyFollowUpSuggestion()}
               style={{
@@ -935,21 +919,13 @@ export default function TreatmentsScreen() {
               backgroundColor: DairyColors.surfaceMuted,
             }}
           />
-          <TextInput
+          <View style={{ flex: 1 }}>
+            <DateInput
             value={withdrawalTillDate}
             onChangeText={setWithdrawalTillDate}
             placeholder={x("Withdrawal till (YYYY-MM-DD)", "विथड्रॉल अंत (YYYY-MM-DD)")}
-            placeholderTextColor="#99A99A"
-            style={{
-              flex: 1,
-              borderWidth: 1,
-              borderColor: DairyColors.border,
-              borderRadius: 10,
-              padding: 10,
-              color: DairyColors.textPrimary,
-              backgroundColor: DairyColors.surfaceMuted,
-            }}
-          />
+            />
+          </View>
         </View>
 
         <TextInput

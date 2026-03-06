@@ -18,6 +18,7 @@ import {
 } from "../../utils/offline-sync";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
+import { DateInput } from "../../../components/date-input";
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   "SALARY",
@@ -260,20 +261,10 @@ export default function ExpensesScreen() {
         </Pressable>
       </View>
 
-      <TextInput
+      <DateInput
         value={date}
         onChangeText={setDate}
         placeholder={x("Date (YYYY-MM-DD)", "तारीख (YYYY-MM-DD)")}
-        placeholderTextColor="#99A99A"
-        style={{
-          marginTop: 12,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          borderRadius: 10,
-          padding: 10,
-          color: DairyColors.textPrimary,
-          backgroundColor: DairyColors.surface,
-        }}
       />
 
       <View
@@ -335,20 +326,10 @@ export default function ExpensesScreen() {
             {editingExpenseId ? x("Edit Expense", "खर्च बदलें") : x("Add Expense", "खर्च जोड़ें")}
           </Text>
 
-          <TextInput
+          <DateInput
             value={expenseDate}
             onChangeText={setExpenseDate}
             placeholder={x("Expense date (YYYY-MM-DD)", "खर्च तारीख (YYYY-MM-DD)")}
-            placeholderTextColor="#99A99A"
-            style={{
-              marginTop: 8,
-              borderWidth: 1,
-              borderColor: DairyColors.border,
-              borderRadius: 10,
-              padding: 10,
-              color: DairyColors.textPrimary,
-              backgroundColor: DairyColors.surfaceMuted,
-            }}
           />
 
           <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>

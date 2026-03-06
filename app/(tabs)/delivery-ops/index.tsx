@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
   AuthApi,
@@ -8,17 +8,24 @@ import {
   CustomerApi,
   CustomerRecordResponse,
   DeliveryReconciliationRowResponse,
+  DeliveryRouteOptimizationResponse,
   DeliveryRunClosureResponse,
   DeliveryTaskApi,
   DeliveryTaskResponse,
   DeliveryTaskStatus,
+  MilkApi,
+  ProcessingStockSummaryResponse,
   ProductType,
+  QcStatus,
+  StockManagerApi,
   SubscriptionGenerationPreviewResponse,
   Shift,
+  UpdateDeliveryTaskStatusBulkItemPayload,
   UpdateDeliveryTaskStatusPayload,
 } from "../../services/api";
 import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
+import { DateInput } from "../../../components/date-input";
 import {
   flushPendingSyncOperations,
   getPendingSyncSummary,
@@ -35,6 +42,19 @@ function routeKey(routeName?: string | null) {
   return route && route.length > 0 ? route : "Unassigned Route";
 }
 
+function compareTaskOrder(a: DeliveryTaskResponse, b: DeliveryTaskResponse) {
+  const stopA = a.optimizedStopOrder ?? Number.MAX_SAFE_INTEGER;
+  const stopB = b.optimizedStopOrder ?? Number.MAX_SAFE_INTEGER;
+  if (stopA !== stopB) return stopA - stopB;
+  const etaA = a.plannedEta ?? "";
+  const etaB = b.plannedEta ?? "";
+  if (etaA !== etaB) return etaA.localeCompare(etaB);
+  const prefA = a.preferredTime ?? "";
+  const prefB = b.preferredTime ?? "";
+  if (prefA !== prefB) return prefA.localeCompare(prefB);
+  return a.customerName.localeCompare(b.customerName);
+}
+
 function statusTone(status: DeliveryTaskStatus) {
   if (status === "DELIVERED") {
     return { bg: DairyColors.successSoft, text: DairyColors.success };
@@ -43,6 +63,25 @@ function statusTone(status: DeliveryTaskStatus) {
     return { bg: DairyColors.warningSoft, text: DairyColors.warning };
   }
   return { bg: DairyColors.infoSoft, text: DairyColors.info };
+}
+
+function slaTone(task: DeliveryTaskResponse) {
+  if (task.status === "DELIVERED") {
+    if (task.slaBreached) {
+      return { bg: DairyColors.warningSoft, text: DairyColors.warning };
+    }
+    return { bg: DairyColors.successSoft, text: DairyColors.success };
+  }
+  return { bg: DairyColors.infoSoft, text: DairyColors.info };
+}
+
+function taskProductType(task: DeliveryTaskResponse): ProductType {
+  return task.productType ?? "MILK";
+}
+
+function qcLabel(status: QcStatus | "MISSING") {
+  if (status === "MISSING") return "NO_BATCH";
+  return status;
 }
 
 const ADDON_PRODUCTS: ProductType[] = ["MILK", "CURD", "BUTTERMILK", "PANEER", "GHEE"];
@@ -74,7 +113,7 @@ function normalizePreviewReason(reason?: string | null) {
 export default function DeliveryOpsScreen() {
   const { user, hasAnyRole } = useAuth();
   const { x, label } = useI18n();
-  const canAccess = hasAnyRole("ADMIN", "MANAGER", "DELIVERY");
+  const canAccess = hasAnyRole("ADMIN", "MANAGER", "DELIVERY", "WORKER");
   const isPrivileged = hasAnyRole("ADMIN", "MANAGER");
 
   const [date, setDate] = useState(todayLocalISO());
@@ -84,7 +123,9 @@ export default function DeliveryOpsScreen() {
   const [syncing, setSyncing] = useState(false);
   const [generatingSubscriptions, setGeneratingSubscriptions] = useState(false);
   const [previewingSubscriptions, setPreviewingSubscriptions] = useState(false);
+  const [optimizingRoutes, setOptimizingRoutes] = useState(false);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
+  const [bulkUpdatingRun, setBulkUpdatingRun] = useState(false);
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
   const [assigneePickerTaskId, setAssigneePickerTaskId] = useState<string | null>(null);
   const [closureSaving, setClosureSaving] = useState(false);
@@ -129,7 +170,94 @@ export default function DeliveryOpsScreen() {
   const [closureOther, setClosureOther] = useState("");
   const [closureNotes, setClosureNotes] = useState("");
   const [runClosures, setRunClosures] = useState<DeliveryRunClosureResponse[]>([]);
+  const [lastOptimization, setLastOptimization] = useState<DeliveryRouteOptimizationResponse | null>(null);
   const [subscriptionPreview, setSubscriptionPreview] = useState<SubscriptionGenerationPreviewResponse | null>(null);
+  const [stockSummary, setStockSummary] = useState<ProcessingStockSummaryResponse | null>(null);
+  const [qcByShift, setQcByShift] = useState<Record<Shift, QcStatus | "MISSING">>({
+    AM: "MISSING",
+    PM: "MISSING",
+  });
+  const [syncingToCurd, setSyncingToCurd] = useState(false);
+  const [deliveryOverrideEnabled, setDeliveryOverrideEnabled] = useState(false);
+  const [deliveryOverrideReason, setDeliveryOverrideReason] = useState("");
+  const autoAssignDateRef = useRef<string>("");
+  const legacyBootstrapDateRef = useRef<string>("");
+
+  const taskKey = useCallback((customerId: string | null | undefined, customerName: string, shift: Shift | null | undefined) => {
+    const customerPart = customerId?.trim() ? customerId.trim() : customerName.trim().toLowerCase();
+    return `${customerPart}__${shift ?? "AM"}`;
+  }, []);
+
+  const ensureBaseSubscriptionTasks = useCallback(
+    async (rows: DeliveryTaskResponse[]) => {
+      if (!isPrivileged) {
+        return rows;
+      }
+      if (legacyBootstrapDateRef.current === date) {
+        return rows;
+      }
+
+      const existing = new Set(
+        rows
+          .filter((row) => (row.productType ?? "MILK") === "MILK")
+          .map((row) => taskKey(row.customerId, row.customerName, row.taskShift))
+      );
+      const activeCustomers = await CustomerApi.list({ active: true });
+      const legacyDailyCustomers = activeCustomers.filter(
+        (row) => row.subscriptionActive && (row.dailySubscriptionQty ?? 0) > 0
+      );
+      if (legacyDailyCustomers.length === 0) {
+        legacyBootstrapDateRef.current = date;
+        return rows;
+      }
+
+      const creates: Promise<DeliveryTaskResponse>[] = [];
+      for (const customer of legacyDailyCustomers) {
+        const totalQty = customer.dailySubscriptionQty ?? 0;
+        if (totalQty <= 0) {
+          continue;
+        }
+        const amQty = Number((totalQty / 2).toFixed(2));
+        const pmQty = Number((totalQty - amQty).toFixed(2));
+        const plans = [
+          { shift: "AM" as Shift, qty: amQty, preferredTime: "06:30" },
+          { shift: "PM" as Shift, qty: pmQty, preferredTime: "17:30" },
+        ];
+        for (const plan of plans) {
+          if (plan.qty <= 0) {
+            continue;
+          }
+          const key = taskKey(customer.customerId, customer.customerName, plan.shift);
+          if (existing.has(key)) {
+            continue;
+          }
+          existing.add(key);
+          creates.push(
+            DeliveryTaskApi.create({
+              taskDate: date,
+              taskShift: plan.shift,
+              preferredTime: plan.preferredTime,
+              customerId: customer.customerId,
+              customerName: null,
+              productType: "MILK",
+              plannedQtyLiters: plan.qty,
+              unitPrice: customer.defaultMilkUnitPrice ?? null,
+              paymentMode: "CREDIT",
+              notes: "Auto-generated from customer daily subscription quantity.",
+            })
+          );
+        }
+      }
+      if (creates.length === 0) {
+        legacyBootstrapDateRef.current = date;
+        return rows;
+      }
+      await Promise.all(creates);
+      legacyBootstrapDateRef.current = date;
+      return DeliveryTaskApi.list({ date });
+    },
+    [date, isPrivileged, taskKey]
+  );
 
   const refreshPendingSync = useCallback(async () => {
     setPendingSync(await getPendingSyncSummary());
@@ -141,18 +269,35 @@ export default function DeliveryOpsScreen() {
       setRows([]);
       setRunClosures([]);
       setSubscriptionPreview(null);
+      setStockSummary(null);
+      setQcByShift({ AM: "MISSING", PM: "MISSING" });
       return;
     }
     try {
       setLoading(true);
-      const [taskRows, reconRows, closureRows] = await Promise.all([
+      if (isPrivileged) {
+        // Keep today plan in sync with active subscriptions.
+        await DeliveryTaskApi.generateSubscriptions(date).catch((e) => {
+          console.error(e);
+        });
+      }
+      const [taskRows, reconRows, closureRows, stockRes, amBatch, pmBatch] = await Promise.all([
         DeliveryTaskApi.list({ date }),
         DeliveryTaskApi.reconciliation(date),
         DeliveryTaskApi.listRunClosures(date),
+        StockManagerApi.summary(date).catch(() => null),
+        MilkApi.getBatch(date, "AM").catch(() => null),
+        MilkApi.getBatch(date, "PM").catch(() => null),
       ]);
-      setTasks(taskRows);
+      const ensuredTaskRows = await ensureBaseSubscriptionTasks(taskRows);
+      setTasks(ensuredTaskRows);
       setRows(reconRows);
       setRunClosures(closureRows);
+      setStockSummary(stockRes);
+      setQcByShift({
+        AM: amBatch?.qcStatus ?? "MISSING",
+        PM: pmBatch?.qcStatus ?? "MISSING",
+      });
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -162,7 +307,7 @@ export default function DeliveryOpsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [canAccess, date, x]);
+  }, [canAccess, date, ensureBaseSubscriptionTasks, isPrivileged, x]);
 
   useEffect(() => {
     void load();
@@ -211,8 +356,66 @@ export default function DeliveryOpsScreen() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [deliveryUsers, tasks]);
 
+  useEffect(() => {
+    if (!isPrivileged) {
+      autoAssignDateRef.current = "";
+      return;
+    }
+    if (autoAssignDateRef.current === date) {
+      return;
+    }
+    const activeUsers = deliveryUsers.filter((row) => row.active);
+    if (activeUsers.length === 0) {
+      return;
+    }
+    const unassigned = tasks.filter(
+      (task) => task.status === "PENDING" && !(task.assignedToUsername ?? "").trim()
+    );
+    if (unassigned.length === 0) {
+      autoAssignDateRef.current = date;
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        autoAssignDateRef.current = date;
+        let idx = 0;
+        for (const task of unassigned) {
+          const nextUser = activeUsers[idx % activeUsers.length];
+          idx += 1;
+          if (!nextUser) {
+            continue;
+          }
+          await DeliveryTaskApi.assign(task.deliveryTaskId, {
+            assignedToUsername: nextUser.username,
+            notes: "Auto-assigned for daily route execution.",
+          });
+        }
+        if (cancelled) {
+          return;
+        }
+        await load();
+      } catch (e) {
+        console.error(e);
+        autoAssignDateRef.current = "";
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [date, deliveryUsers, isPrivileged, load, tasks]);
+
   const byAssignee = useMemo(() => {
-    if (!isPrivileged || assigneeFilter === "ALL") {
+    if (!isPrivileged) {
+      const me = (user?.username ?? "").trim().toLowerCase();
+      return tasks.filter((task) => {
+        const assignee = (task.assignedToUsername ?? "").trim().toLowerCase();
+        return !assignee || assignee === me;
+      });
+    }
+    if (assigneeFilter === "ALL") {
       return tasks;
     }
     if (assigneeFilter === "UNASSIGNED") {
@@ -221,7 +424,7 @@ export default function DeliveryOpsScreen() {
     return tasks.filter(
       (task) => (task.assignedToUsername ?? "").toLowerCase() === assigneeFilter.toLowerCase()
     );
-  }, [assigneeFilter, isPrivileged, tasks]);
+  }, [assigneeFilter, isPrivileged, tasks, user?.username]);
 
   const filtered = useMemo(() => {
     return byAssignee.filter((task) => {
@@ -243,12 +446,7 @@ export default function DeliveryOpsScreen() {
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([routeName, items]) => ({
         routeName,
-        items: [...items].sort((a, b) => {
-          const t1 = a.preferredTime ?? "";
-          const t2 = b.preferredTime ?? "";
-          if (t1 !== t2) return t1.localeCompare(t2);
-          return a.customerName.localeCompare(b.customerName);
-        }),
+        items: [...items].sort(compareTaskOrder),
       }));
   }, [filtered]);
 
@@ -284,13 +482,96 @@ export default function DeliveryOpsScreen() {
     return { total, delivered, pending, skipped };
   }, [filtered]);
 
+  const scopedTasks = useMemo(() => {
+    if (isPrivileged) {
+      return tasks;
+    }
+    const me = (user?.username ?? "").trim().toLowerCase();
+    return tasks.filter((task) => {
+      const assignee = (task.assignedToUsername ?? "").trim().toLowerCase();
+      return !assignee || assignee === me;
+    });
+  }, [isPrivileged, tasks, user?.username]);
+
+  const shiftCloseSummary = useMemo(() => {
+    const shifts: Shift[] = ["AM", "PM"];
+    const stats = shifts.map((shift) => {
+      const rowsForShift = scopedTasks.filter((task) => (task.taskShift ?? "AM") === shift);
+      const total = rowsForShift.length;
+      const pending = rowsForShift.filter((task) => task.status === "PENDING").length;
+      return {
+        shift,
+        total,
+        pending,
+        closed: total > 0 && pending === 0,
+      };
+    });
+    const hasAm = stats.some((row) => row.shift === "AM" && row.total > 0);
+    const hasPm = stats.some((row) => row.shift === "PM" && row.total > 0);
+    const bothClosed = stats.every((row) => (row.total > 0 ? row.closed : true)) && hasAm && hasPm;
+    return { stats, hasAm, hasPm, bothClosed };
+  }, [scopedTasks]);
+
+  const dispatchReadiness = useMemo(() => {
+    const shifts: Shift[] = ["AM", "PM"];
+    const milkTasks = scopedTasks.filter((task) => taskProductType(task) === "MILK");
+    const byShift = shifts.map((shift) => {
+      const rows = milkTasks.filter((task) => (task.taskShift ?? "AM") === shift);
+      const pendingLiters = rows.reduce(
+        (sum, row) => sum + (row.status === "PENDING" ? row.plannedQtyLiters : 0),
+        0
+      );
+      const deliveredLiters = rows.reduce(
+        (sum, row) =>
+          sum +
+          (row.status === "DELIVERED"
+            ? row.deliveredQtyLiters ?? row.plannedQtyLiters
+            : 0),
+        0
+      );
+      return {
+        shift,
+        stops: rows.length,
+        pendingLiters,
+        deliveredLiters,
+      };
+    });
+    const totalPendingMilkLiters = byShift.reduce((sum, row) => sum + row.pendingLiters, 0);
+    const totalDeliveredMilkLiters = byShift.reduce((sum, row) => sum + row.deliveredLiters, 0);
+    const availableMilkLiters = stockSummary?.milkBalanceLiters ?? 0;
+    const deficitLiters = Math.max(0, totalPendingMilkLiters - availableMilkLiters);
+    const surplusLiters = Math.max(0, availableMilkLiters - totalPendingMilkLiters);
+    const pendingNonMilkStops = scopedTasks.filter(
+      (task) => task.status === "PENDING" && taskProductType(task) !== "MILK"
+    ).length;
+    return {
+      byShift,
+      totalPendingMilkLiters,
+      totalDeliveredMilkLiters,
+      availableMilkLiters,
+      deficitLiters,
+      surplusLiters,
+      pendingNonMilkStops,
+      ready: deficitLiters <= 0,
+    };
+  }, [scopedTasks, stockSummary?.milkBalanceLiters]);
+
+  const pendingMilkToCurd = useMemo(() => {
+    if (!shiftCloseSummary.bothClosed) {
+      return 0;
+    }
+    return stockSummary?.milkBalanceLiters ?? 0;
+  }, [shiftCloseSummary.bothClosed, stockSummary?.milkBalanceLiters]);
+
   const runTasks = useMemo(
     () =>
-      byAssignee.filter(
+      byAssignee
+        .filter(
         (task) =>
           routeKey(task.routeName) === runRoute &&
           (task.taskShift ?? "AM") === runShift
-      ),
+      )
+        .sort(compareTaskOrder),
     [byAssignee, runRoute, runShift]
   );
 
@@ -346,6 +627,26 @@ export default function DeliveryOpsScreen() {
       expectedOther,
     };
   }, [runTasks]);
+
+  const runPendingMilkLiters = useMemo(
+    () =>
+      runTasks.reduce(
+        (sum, row) =>
+          sum +
+          (row.status === "PENDING" && taskProductType(row) === "MILK"
+            ? row.plannedQtyLiters
+            : 0),
+        0
+      ),
+    [runTasks]
+  );
+  const runAvailableMilkLiters = stockSummary?.milkBalanceLiters ?? 0;
+  const runMilkDeficitLiters = Math.max(0, runPendingMilkLiters - runAvailableMilkLiters);
+  const runHasMilkStops = useMemo(
+    () => runTasks.some((row) => taskProductType(row) === "MILK"),
+    [runTasks]
+  );
+  const runShiftQcStatus = qcByShift[runShift];
 
   const closureActual = useMemo(() => {
     const cash = Number(closureCash);
@@ -518,13 +819,14 @@ export default function DeliveryOpsScreen() {
     }
     try {
       setGeneratingSubscriptions(true);
-      const generated = await DeliveryTaskApi.generateSubscriptions(date);
+      const planned = await DeliveryTaskApi.triggerDayPlan(date, true);
+      autoAssignDateRef.current = "";
       await load();
       Alert.alert(
         x("Plan generated", "प्लान तैयार"),
         x(
-          `Subscription tasks ready for ${date}. Rows: ${generated.length}`,
-          `${date} के लिए सब्सक्रिप्शन टास्क तैयार। पंक्तियां: ${generated.length}`
+          `Date ${planned.date} | Generated ${planned.generatedTasks} | Auto-assigned ${planned.autoAssignedTasks} | Optimized ${planned.optimizedTasks} | Routes ${planned.optimizedRoutes} | Total ${planned.totalTasks} | Pending ${planned.pendingTasks}`,
+          `तारीख ${planned.date} | जेनरेट ${planned.generatedTasks} | ऑटो-असाइन ${planned.autoAssignedTasks} | ऑप्टिमाइज़ ${planned.optimizedTasks} | रूट ${planned.optimizedRoutes} | कुल ${planned.totalTasks} | बाकी ${planned.pendingTasks}`
         )
       );
     } catch (e: any) {
@@ -535,6 +837,37 @@ export default function DeliveryOpsScreen() {
       );
     } finally {
       setGeneratingSubscriptions(false);
+    }
+  };
+
+  const optimizeRoutesNow = async () => {
+    if (!isPrivileged) {
+      return;
+    }
+    try {
+      setOptimizingRoutes(true);
+      const optimized = await DeliveryTaskApi.optimize({
+        date,
+        shift: shiftFilter === "ALL" ? null : shiftFilter,
+        routeName: null,
+      });
+      setLastOptimization(optimized);
+      await load();
+      Alert.alert(
+        x("Routes optimized", "रूट ऑप्टिमाइज़"),
+        x(
+          `Optimized ${optimized.optimizedTasks} tasks across ${optimized.optimizedRoutes} route groups.`,
+          `${optimized.optimizedTasks} टास्क और ${optimized.optimizedRoutes} रूट ग्रुप ऑप्टिमाइज़ हुए।`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Optimize failed", "ऑप्टिमाइज़ असफल"),
+        e?.message ?? x("Could not optimize routes.", "रूट ऑप्टिमाइज़ नहीं हो पाए।")
+      );
+    } finally {
+      setOptimizingRoutes(false);
     }
   };
 
@@ -587,7 +920,7 @@ export default function DeliveryOpsScreen() {
   };
 
   const taskBusy = (deliveryTaskId: string) =>
-    savingTaskId === deliveryTaskId || assigningTaskId === deliveryTaskId;
+    bulkUpdatingRun || savingTaskId === deliveryTaskId || assigningTaskId === deliveryTaskId;
 
   const claimTask = async (task: DeliveryTaskResponse, notes?: string | null) => {
     await updateTaskStatus(task, "PENDING", { notes: notes ?? null });
@@ -655,6 +988,19 @@ export default function DeliveryOpsScreen() {
       parsedCollectedAmount = value;
     }
 
+    const overrideEnabledForThisUpdate =
+      status === "DELIVERED" && isPrivileged && deliveryOverrideEnabled;
+    if (overrideEnabledForThisUpdate && !deliveryOverrideReason.trim()) {
+      Alert.alert(
+        x("Override reason required", "ओवरराइड कारण जरूरी"),
+        x(
+          "Add withdrawal override reason before forcing delivery.",
+          "डिलीवरी force करने से पहले withdrawal override reason दर्ज करें।"
+        )
+      );
+      return;
+    }
+
     const payload: UpdateDeliveryTaskStatusPayload = {
       status,
       deliveredQtyLiters:
@@ -662,16 +1008,61 @@ export default function DeliveryOpsScreen() {
           ? task.deliveredQtyLiters ?? task.plannedQtyLiters
           : task.deliveredQtyLiters ?? null,
       collectedAmount: parsedCollectedAmount,
+      overrideWithdrawalLock: overrideEnabledForThisUpdate ? true : undefined,
+      overrideReason: overrideEnabledForThisUpdate ? deliveryOverrideReason.trim() : undefined,
       notes: options?.notes?.trim() || null,
     };
 
     try {
       setSavingTaskId(task.deliveryTaskId);
+      const currentAssignee = (task.assignedToUsername ?? "").trim().toLowerCase();
+      const me = (user?.username ?? "").trim().toLowerCase();
+      if (!isPrivileged && currentAssignee && me && currentAssignee !== me) {
+        Alert.alert(
+          x("Task assigned to another user", "टास्क किसी और को असाइन है"),
+          x(
+            `This stop is assigned to ${task.assignedToUsername}. Please claim another task or ask manager to reassign.`,
+            `यह स्टॉप ${task.assignedToUsername} को असाइन है। दूसरा टास्क लें या मैनेजर से रीअसाइन करवाएं।`
+          )
+        );
+        return;
+      }
+      if (!currentAssignee && user?.username) {
+        await DeliveryTaskApi.assign(task.deliveryTaskId, {
+          assignedToUsername: user.username,
+          notes: "Claimed automatically on status update.",
+        });
+      }
       await DeliveryTaskApi.updateStatus(task.deliveryTaskId, payload);
+      if (status === "DELIVERED" || status === "SKIPPED") {
+        // Keep stock manager aligned with delivered quantity in near real-time.
+        await StockManagerApi.syncDay({
+          date,
+          autoTransferMilkToCurd: false,
+        }).catch((e) => {
+          console.error(e);
+        });
+      }
       setRunCollectedByTaskId((prev) => ({ ...prev, [task.deliveryTaskId]: "" }));
       await load();
     } catch (e: any) {
       console.error(e);
+      const message = String(e?.message ?? "");
+      if (
+        status === "DELIVERED" &&
+        message.toLowerCase().includes("withdrawal period active") &&
+        isPrivileged &&
+        !deliveryOverrideEnabled
+      ) {
+        Alert.alert(
+          x("Withdrawal lock active", "विदड्रॉल लॉक सक्रिय"),
+          x(
+            "Enable Compliance Override and add reason if emergency delivery is required.",
+            "जरूरी डिलीवरी के लिए Compliance Override चालू करें और कारण दर्ज करें।"
+          )
+        );
+        return;
+      }
       if (shouldQueueForOffline(e)) {
         await queueDeliveryTaskStatus(task.deliveryTaskId, payload, String(e?.message ?? ""));
         await refreshPendingSync();
@@ -690,6 +1081,97 @@ export default function DeliveryOpsScreen() {
     }
   };
 
+  const bulkUpdateRunPending = async (status: "DELIVERED" | "SKIPPED") => {
+    const pendingTasks = runTasks.filter((task) => task.status === "PENDING");
+    if (pendingTasks.length === 0) {
+      Alert.alert(
+        x("No pending stops", "कोई पेंडिंग स्टॉप नहीं"),
+        x("All selected run stops are already processed.", "चुने हुए रन के सभी स्टॉप पहले से प्रोसेस हैं।")
+      );
+      return;
+    }
+
+    const items: UpdateDeliveryTaskStatusBulkItemPayload[] = [];
+    const overrideEnabledForRun = status === "DELIVERED" && isPrivileged && deliveryOverrideEnabled;
+    if (overrideEnabledForRun && !deliveryOverrideReason.trim()) {
+      Alert.alert(
+        x("Override reason required", "ओवरराइड कारण जरूरी"),
+        x(
+          "Add withdrawal override reason before bulk delivery override.",
+          "बल्क डिलीवरी ओवरराइड से पहले withdrawal reason दर्ज करें।"
+        )
+      );
+      return;
+    }
+    for (const task of pendingTasks) {
+      const collectedRaw = (runCollectedByTaskId[task.deliveryTaskId] ?? "").trim();
+      let collectedAmount: number | null = null;
+      if (status === "DELIVERED" && collectedRaw.length > 0) {
+        const value = Number(collectedRaw);
+        if (!Number.isFinite(value) || value < 0) {
+          Alert.alert(
+            x("Invalid amount", "गलत राशि"),
+            x(
+              `Collected amount for ${task.customerName} must be zero or positive.`,
+              `${task.customerName} के लिए कलेक्शन राशि शून्य या पॉजिटिव होनी चाहिए।`
+            )
+          );
+          return;
+        }
+        collectedAmount = value;
+      }
+
+      items.push({
+        deliveryTaskId: task.deliveryTaskId,
+        status,
+        deliveredQtyLiters:
+          status === "DELIVERED"
+            ? task.deliveredQtyLiters ?? task.plannedQtyLiters
+            : task.deliveredQtyLiters ?? null,
+        collectedAmount,
+        overrideWithdrawalLock: overrideEnabledForRun ? true : undefined,
+        overrideReason: overrideEnabledForRun ? deliveryOverrideReason.trim() : undefined,
+        notes: runNoteByTaskId[task.deliveryTaskId]?.trim() || null,
+      });
+    }
+
+    try {
+      setBulkUpdatingRun(true);
+      const result = await DeliveryTaskApi.bulkUpdateStatus({ items });
+      await load();
+      if (result.failedCount > 0) {
+        const topErrors = result.items
+          .filter((row) => !row.success)
+          .slice(0, 3)
+          .map((row) => row.errorMessage ?? "Status update failed")
+          .join(" | ");
+        Alert.alert(
+          x("Partial update", "आंशिक अपडेट"),
+          x(
+            `Updated ${result.successCount}/${result.totalCount}. Failed ${result.failedCount}. ${topErrors}`,
+            `${result.totalCount} में से ${result.successCount} अपडेट हुए। ${result.failedCount} असफल। ${topErrors}`
+          )
+        );
+      } else {
+        Alert.alert(
+          x("Bulk update done", "बल्क अपडेट पूरा"),
+          x(
+            `${result.successCount} stops marked as ${status}.`,
+            `${result.successCount} स्टॉप ${status} में अपडेट हो गए।`
+          )
+        );
+      }
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Bulk update failed", "बल्क अपडेट असफल"),
+        e?.message ?? x("Could not update run tasks in bulk.", "रन टास्क बल्क में अपडेट नहीं हो पाए।")
+      );
+    } finally {
+      setBulkUpdatingRun(false);
+    }
+  };
+
   const startRun = () => {
     if (!runRoute) {
       Alert.alert(
@@ -705,10 +1187,65 @@ export default function DeliveryOpsScreen() {
       );
       return;
     }
+    if (runHasMilkStops && runShiftQcStatus !== "PASS") {
+      Alert.alert(
+        x("QC not ready", "QC तैयार नहीं"),
+        x(
+          `${label("shift", runShift)} milk delivery can start only when QC is PASS. Current: ${qcLabel(runShiftQcStatus)}.`,
+          `${label("shift", runShift)} दूध डिलीवरी तभी शुरू होगी जब QC PASS हो। अभी: ${qcLabel(runShiftQcStatus)}।`
+        )
+      );
+      return;
+    }
+    if (runMilkDeficitLiters > 0) {
+      if (!isPrivileged) {
+        Alert.alert(
+          x("Stock not ready", "स्टॉक पर्याप्त नहीं"),
+          x(
+            `Pending milk ${runPendingMilkLiters.toFixed(2)} L is higher than available stock ${runAvailableMilkLiters.toFixed(2)} L.`,
+            `रन के लिए लंबित दूध ${runPendingMilkLiters.toFixed(2)} L है, जबकि उपलब्ध स्टॉक ${runAvailableMilkLiters.toFixed(2)} L है।`
+          )
+        );
+        return;
+      }
+      Alert.alert(
+        x("Low milk stock", "दूध स्टॉक कम"),
+        x(
+          `Pending milk for this run is ${runPendingMilkLiters.toFixed(2)} L but stock is ${runAvailableMilkLiters.toFixed(2)} L. Start anyway?`,
+          `इस रन के लिए लंबित दूध ${runPendingMilkLiters.toFixed(2)} L है और स्टॉक ${runAvailableMilkLiters.toFixed(2)} L है। फिर भी रन शुरू करें?`
+        ),
+        [
+          { text: x("Cancel", "रद्द"), style: "cancel" },
+          { text: x("Start anyway", "फिर भी शुरू करें"), style: "destructive", onPress: () => setRunActive(true) },
+        ]
+      );
+      return;
+    }
     setRunActive(true);
   };
 
   const closeRun = async () => {
+    if (runSummary.pendingStops > 0 && !isPrivileged) {
+      Alert.alert(
+        x("Pending stops remain", "कुछ स्टॉप बाकी हैं"),
+        x(
+          "You can close run only after all selected stops are delivered or skipped.",
+          "रन बंद करने से पहले सभी चुने हुए स्टॉप डिलीवर या स्किप होने चाहिए।"
+        )
+      );
+      return;
+    }
+    if (runSummary.pendingStops > 0 && isPrivileged && !closureNotes.trim()) {
+      Alert.alert(
+        x("Closure note required", "क्लोजर नोट जरूरी"),
+        x(
+          "Pending stops exist. Add a closure note before closing this run.",
+          "कुछ स्टॉप बाकी हैं। यह रन बंद करने से पहले क्लोजर नोट लिखें।"
+        )
+      );
+      return;
+    }
+
     const cash = Number(closureCash);
     const upi = Number(closureUpi);
     const other = Number(closureOther);
@@ -769,6 +1306,36 @@ export default function DeliveryOpsScreen() {
     }
   };
 
+  const movePendingMilkToCurd = async () => {
+    if (!isPrivileged || pendingMilkToCurd <= 0) {
+      return;
+    }
+    try {
+      setSyncingToCurd(true);
+      const next = await StockManagerApi.syncDay({
+        date,
+        autoTransferMilkToCurd: true,
+      });
+      setStockSummary(next);
+      await load();
+      Alert.alert(
+        x("Transferred", "ट्रांसफर हो गया"),
+        x(
+          `Milk moved to curd. Remaining milk balance: ${next.milkBalanceLiters.toFixed(2)} L`,
+          `दूध दही में ट्रांसफर हो गया। बाकी दूध बैलेंस: ${next.milkBalanceLiters.toFixed(2)} L`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Transfer failed", "ट्रांसफर असफल"),
+        e?.message ?? x("Could not auto-transfer milk to curd.", "दूध दही में ट्रांसफर नहीं हो पाया।")
+      );
+    } finally {
+      setSyncingToCurd(false);
+    }
+  };
+
   if (!canAccess) {
     return <Redirect href="/services" />;
   }
@@ -804,20 +1371,10 @@ export default function DeliveryOpsScreen() {
         </Pressable>
       </View>
 
-      <TextInput
+      <DateInput
         value={date}
         onChangeText={setDate}
         placeholder={x("Date (YYYY-MM-DD)", "तारीख (YYYY-MM-DD)")}
-        placeholderTextColor="#99A99A"
-        style={{
-          marginTop: 12,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          borderRadius: 10,
-          padding: 10,
-          color: DairyColors.textPrimary,
-          backgroundColor: DairyColors.surface,
-        }}
       />
 
       {isPrivileged ? (
@@ -854,6 +1411,22 @@ export default function DeliveryOpsScreen() {
               {previewingSubscriptions ? x("Previewing...", "प्रीव्यू बन रहा...") : x("Preview", "प्रीव्यू")}
             </Text>
           </Pressable>
+          <Pressable
+            disabled={optimizingRoutes}
+            onPress={() => void optimizeRoutesNow()}
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.primary,
+              backgroundColor: optimizingRoutes ? DairyColors.textSecondary : DairyColors.primarySoft,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+            }}
+          >
+            <Text style={{ color: DairyColors.primary, fontWeight: "800" }}>
+              {optimizingRoutes ? x("Optimizing...", "ऑप्टिमाइज़ हो रहा...") : x("Optimize Routes", "रूट ऑप्टिमाइज़")}
+            </Text>
+          </Pressable>
           <Text style={{ color: DairyColors.textSecondary, paddingTop: 9 }}>
             {x(
               "Use this once per day before assigning/starting route runs.",
@@ -861,6 +1434,15 @@ export default function DeliveryOpsScreen() {
             )}
           </Text>
         </View>
+      ) : null}
+
+      {isPrivileged && lastOptimization ? (
+        <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+          {x(
+            `Last optimization: ${lastOptimization.optimizedTasks} tasks, ${lastOptimization.optimizedRoutes} routes at ${lastOptimization.optimizedAt ?? "-"}`,
+            `आखिरी ऑप्टिमाइज़ेशन: ${lastOptimization.optimizedTasks} टास्क, ${lastOptimization.optimizedRoutes} रूट, समय ${lastOptimization.optimizedAt ?? "-"}`
+          )}
+        </Text>
       ) : null}
 
       {isPrivileged && subscriptionPreview ? (
@@ -1001,6 +1583,193 @@ export default function DeliveryOpsScreen() {
 
       <View
         style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 12,
+          backgroundColor: DairyColors.surface,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Shift Closure Status", "शिफ्ट क्लोज़र स्थिति")}
+        </Text>
+        {shiftCloseSummary.stats.map((row) => (
+          <Text key={`shift-close-${row.shift}`} style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `${label("shift", row.shift)}: ${row.total} stops | Pending ${row.pending} | QC ${qcLabel(qcByShift[row.shift])} | ${row.closed ? "Closed" : "Open"}`,
+              `${label("shift", row.shift)}: ${row.total} स्टॉप | बाकी ${row.pending} | QC ${qcLabel(qcByShift[row.shift])} | ${row.closed ? "बंद" : "खुला"}`
+            )}
+          </Text>
+        ))}
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            `Milk balance: ${(stockSummary?.milkBalanceLiters ?? 0).toFixed(2)} L`,
+            `दूध बैलेंस: ${(stockSummary?.milkBalanceLiters ?? 0).toFixed(2)} L`
+          )}
+        </Text>
+      </View>
+
+      <View
+        style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: dispatchReadiness.ready ? DairyColors.success : DairyColors.warning,
+          borderRadius: 12,
+          backgroundColor: dispatchReadiness.ready ? DairyColors.successSoft : DairyColors.warningSoft,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Dispatch Readiness (Milk)", "डिस्पैच तैयारी (दूध)")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            `Pending milk ${dispatchReadiness.totalPendingMilkLiters.toFixed(2)} L | Available stock ${dispatchReadiness.availableMilkLiters.toFixed(2)} L | Delivered today ${dispatchReadiness.totalDeliveredMilkLiters.toFixed(2)} L`,
+            `लंबित दूध ${dispatchReadiness.totalPendingMilkLiters.toFixed(2)} L | उपलब्ध स्टॉक ${dispatchReadiness.availableMilkLiters.toFixed(2)} L | आज डिलीवर ${dispatchReadiness.totalDeliveredMilkLiters.toFixed(2)} L`
+          )}
+        </Text>
+        <Text
+          style={{
+            marginTop: 4,
+            color: dispatchReadiness.ready ? DairyColors.success : DairyColors.warning,
+            fontWeight: "700",
+          }}
+        >
+          {dispatchReadiness.ready
+            ? x(
+                `Ready for dispatch. Surplus ${dispatchReadiness.surplusLiters.toFixed(2)} L`,
+                `डिस्पैच के लिए तैयार। अतिरिक्त ${dispatchReadiness.surplusLiters.toFixed(2)} L`
+              )
+            : x(
+                `Shortage ${dispatchReadiness.deficitLiters.toFixed(2)} L. Add/allocate milk before route start.`,
+                `कमी ${dispatchReadiness.deficitLiters.toFixed(2)} L है। रूट शुरू करने से पहले दूध जोड़ें/आवंटित करें।`
+              )}
+        </Text>
+        {dispatchReadiness.pendingNonMilkStops > 0 ? (
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `Pending non-milk stops: ${dispatchReadiness.pendingNonMilkStops}`,
+              `लंबित गैर-दूध स्टॉप: ${dispatchReadiness.pendingNonMilkStops}`
+            )}
+          </Text>
+        ) : null}
+        {dispatchReadiness.byShift.map((row) => (
+          <Text key={`dispatch-shift-${row.shift}`} style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `${label("shift", row.shift)}: ${row.stops} stops | Pending milk ${row.pendingLiters.toFixed(2)} L | Delivered ${row.deliveredLiters.toFixed(2)} L | QC ${qcLabel(qcByShift[row.shift])}`,
+              `${label("shift", row.shift)}: ${row.stops} स्टॉप | लंबित दूध ${row.pendingLiters.toFixed(2)} L | डिलीवर ${row.deliveredLiters.toFixed(2)} L | QC ${qcLabel(qcByShift[row.shift])}`
+            )}
+          </Text>
+        ))}
+      </View>
+
+      {isPrivileged ? (
+        <View
+          style={{
+            marginTop: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 12,
+            backgroundColor: DairyColors.surface,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Compliance Override (Milk)", "कंप्लायंस ओवरराइड (दूध)")}
+          </Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              "Use only when withdrawal lock blocks urgent delivery. Reason is mandatory and audited.",
+              "केवल जरूरी डिलीवरी के लिए प्रयोग करें। कारण देना जरूरी है और ऑडिट होगा।"
+            )}
+          </Text>
+          <Pressable
+            onPress={() => setDeliveryOverrideEnabled((prev) => !prev)}
+            style={{
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: deliveryOverrideEnabled ? DairyColors.warning : DairyColors.border,
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              alignSelf: "flex-start",
+              backgroundColor: deliveryOverrideEnabled ? DairyColors.warningSoft : DairyColors.surface,
+            }}
+          >
+            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+              {deliveryOverrideEnabled
+                ? x("Override Enabled", "ओवरराइड चालू")
+                : x("Enable Override", "ओवरराइड चालू करें")}
+            </Text>
+          </Pressable>
+          {deliveryOverrideEnabled ? (
+            <TextInput
+              value={deliveryOverrideReason}
+              onChangeText={setDeliveryOverrideReason}
+              placeholder={x("Override reason (required)", "ओवरराइड कारण (जरूरी)")}
+              placeholderTextColor="#99A99A"
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: DairyColors.warning,
+                borderRadius: 10,
+                padding: 10,
+                color: DairyColors.textPrimary,
+                backgroundColor: DairyColors.surfaceMuted,
+              }}
+            />
+          ) : null}
+        </View>
+      ) : null}
+
+      {pendingMilkToCurd > 0 ? (
+        <View
+          style={{
+            marginTop: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.warning,
+            borderRadius: 12,
+            backgroundColor: DairyColors.warningSoft,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.warning, fontWeight: "800" }}>
+            {x(
+              `Both shifts closed. Pending milk ${pendingMilkToCurd.toFixed(2)} L should move to curd.`,
+              `दोनों शिफ्ट बंद हैं। बाकी दूध ${pendingMilkToCurd.toFixed(2)} L को दही में डालें।`
+            )}
+          </Text>
+          {isPrivileged ? (
+            <Pressable
+              onPress={() => void movePendingMilkToCurd()}
+              disabled={syncingToCurd}
+              style={{
+                marginTop: 8,
+                alignSelf: "flex-start",
+                borderRadius: 10,
+                backgroundColor: syncingToCurd ? DairyColors.textSecondary : DairyColors.warning,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "800" }}>
+                {syncingToCurd ? x("Moving...", "ट्रांसफर हो रहा...") : x("Move Milk to Curd", "दूध दही में डालें")}
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+              {x(
+                "Ask ADMIN/MANAGER to complete curd transfer.",
+                "दही ट्रांसफर के लिए ADMIN/MANAGER से कहें।"
+              )}
+            </Text>
+          )}
+        </View>
+      ) : null}
+
+      <View
+        style={{
           marginTop: 12,
           borderWidth: 1,
           borderColor: DairyColors.border,
@@ -1059,6 +1828,24 @@ export default function DeliveryOpsScreen() {
           {x(
             `Current user: ${user?.username ?? "-"}`,
             `वर्तमान यूज़र: ${user?.username ?? "-"}`
+          )}
+        </Text>
+        <Text
+          style={{
+            marginTop: 4,
+            color:
+              runMilkDeficitLiters > 0 || (runHasMilkStops && runShiftQcStatus !== "PASS")
+                ? DairyColors.warning
+                : DairyColors.textSecondary,
+            fontWeight:
+              runMilkDeficitLiters > 0 || (runHasMilkStops && runShiftQcStatus !== "PASS")
+                ? "700"
+                : "400",
+          }}
+        >
+          {x(
+            `Selected run pending milk ${runPendingMilkLiters.toFixed(2)} L | Stock ${runAvailableMilkLiters.toFixed(2)} L | QC ${qcLabel(runShiftQcStatus)}`,
+            `चुने हुए रन का लंबित दूध ${runPendingMilkLiters.toFixed(2)} L | स्टॉक ${runAvailableMilkLiters.toFixed(2)} L | QC ${qcLabel(runShiftQcStatus)}`
           )}
         </Text>
 
@@ -1277,9 +2064,48 @@ export default function DeliveryOpsScreen() {
               `रूट ${runRoute} | शिफ्ट ${runShift}`
             )}
           </Text>
+          <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <Pressable
+              disabled={bulkUpdatingRun || runSummary.pendingStops <= 0}
+              onPress={() => void bulkUpdateRunPending("DELIVERED")}
+              style={{
+                borderRadius: 10,
+                backgroundColor:
+                  bulkUpdatingRun || runSummary.pendingStops <= 0
+                    ? DairyColors.textSecondary
+                    : DairyColors.success,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "800" }}>
+                {bulkUpdatingRun
+                  ? x("Updating...", "अपडेट हो रहा...")
+                  : x("Deliver All Pending", "सभी पेंडिंग डिलीवर")}
+              </Text>
+            </Pressable>
+            <Pressable
+              disabled={bulkUpdatingRun || runSummary.pendingStops <= 0}
+              onPress={() => void bulkUpdateRunPending("SKIPPED")}
+              style={{
+                borderRadius: 10,
+                backgroundColor:
+                  bulkUpdatingRun || runSummary.pendingStops <= 0
+                    ? DairyColors.textSecondary
+                    : DairyColors.warning,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "800" }}>
+                {x("Skip All Pending", "सभी पेंडिंग स्किप")}
+              </Text>
+            </Pressable>
+          </View>
 
           {runTasks.map((task) => {
             const tone = statusTone(task.status);
+            const sla = slaTone(task);
             return (
               <View
                 key={`run-${task.deliveryTaskId}`}
@@ -1301,6 +2127,33 @@ export default function DeliveryOpsScreen() {
                 <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
                   {label("productType", task.productType ?? "MILK")} | {task.plannedQtyLiters.toFixed(2)} | {x("Mode", "मोड")} {label("paymentMode", task.paymentMode)}
                 </Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Stop ${task.optimizedStopOrder ?? "-"} | ETA ${task.plannedEta ?? "-"} | SLA ${task.slaDueTime ?? "-"}`,
+                    `स्टॉप ${task.optimizedStopOrder ?? "-"} | ETA ${task.plannedEta ?? "-"} | SLA ${task.slaDueTime ?? "-"}`
+                  )}
+                </Text>
+                <View
+                  style={{
+                    marginTop: 4,
+                    alignSelf: "flex-start",
+                    borderRadius: 999,
+                    backgroundColor: sla.bg,
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                  }}
+                >
+                  <Text style={{ color: sla.text, fontWeight: "700" }}>
+                    {task.status === "DELIVERED"
+                      ? task.slaBreached
+                        ? x(
+                            `SLA Breached (+${task.slaDelayMinutes ?? 0}m)`,
+                            `SLA लेट (+${task.slaDelayMinutes ?? 0}मि)`
+                          )
+                        : x("SLA On Time", "SLA समय पर")
+                      : x("SLA Tracking Active", "SLA ट्रैकिंग चालू")}
+                  </Text>
+                </View>
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(
                     `Assigned: ${task.assignedToUsername?.trim() || "Unassigned"}`,
@@ -1784,6 +2637,7 @@ export default function DeliveryOpsScreen() {
 
           {group.items.map((task) => {
             const tone = statusTone(task.status);
+            const sla = slaTone(task);
             const productType = task.productType ?? "MILK";
             return (
               <View
@@ -1808,6 +2662,33 @@ export default function DeliveryOpsScreen() {
                   {x(`Shift ${task.taskShift ?? "AM"}`, `शिफ्ट ${task.taskShift ?? "AM"}`)}
                   {task.preferredTime ? ` | ${x("Time", "समय")} ${task.preferredTime}` : ""}
                 </Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Stop ${task.optimizedStopOrder ?? "-"} | ETA ${task.plannedEta ?? "-"} | SLA ${task.slaDueTime ?? "-"}`,
+                    `स्टॉप ${task.optimizedStopOrder ?? "-"} | ETA ${task.plannedEta ?? "-"} | SLA ${task.slaDueTime ?? "-"}`
+                  )}
+                </Text>
+                <View
+                  style={{
+                    marginTop: 4,
+                    alignSelf: "flex-start",
+                    borderRadius: 999,
+                    backgroundColor: sla.bg,
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                  }}
+                >
+                  <Text style={{ color: sla.text, fontWeight: "700" }}>
+                    {task.status === "DELIVERED"
+                      ? task.slaBreached
+                        ? x(
+                            `SLA Breached (+${task.slaDelayMinutes ?? 0}m)`,
+                            `SLA लेट (+${task.slaDelayMinutes ?? 0}मि)`
+                          )
+                        : x("SLA On Time", "SLA समय पर")
+                      : x("SLA Tracking Active", "SLA ट्रैकिंग चालू")}
+                  </Text>
+                </View>
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(
                     `Assigned: ${task.assignedToUsername?.trim() || "Unassigned"}`,
@@ -2001,6 +2882,12 @@ export default function DeliveryOpsScreen() {
                 {x(
                   `Collected Rs ${row.collectedAmount.toFixed(2)} | Pending Rs ${row.pendingAmount.toFixed(2)}`,
                   `वसूली रु ${row.collectedAmount.toFixed(2)} | बाकी रु ${row.pendingAmount.toFixed(2)}`
+                )}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `SLA On-time ${row.onTimeDeliveredTasks} | Breached ${row.slaBreachedDeliveredTasks} | Avg delay ${row.avgDelayMinutesForDelivered.toFixed(1)}m`,
+                  `SLA समय पर ${row.onTimeDeliveredTasks} | लेट ${row.slaBreachedDeliveredTasks} | औसत देरी ${row.avgDelayMinutesForDelivered.toFixed(1)}मि`
                 )}
               </Text>
             </View>

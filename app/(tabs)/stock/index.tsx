@@ -13,6 +13,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { useI18n } from "../../state/i18n";
 import { useAuth } from "../../state/auth";
 import { todayLocalISO } from "../../utils/date";
+import { DateInput } from "../../../components/date-input";
 
 const STAGES: ProcessingStockStage[] = ["MILK", "CURD", "BUTTERMILK", "GHEE"];
 
@@ -244,20 +245,10 @@ export default function StockManagerScreen() {
               </Pressable>
             </View>
 
-            <TextInput
+            <DateInput
               value={date}
               onChangeText={setDate}
               placeholder={x("Date (YYYY-MM-DD)", "तारीख (YYYY-MM-DD)")}
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 12,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 10,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surface,
-              }}
             />
 
             <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

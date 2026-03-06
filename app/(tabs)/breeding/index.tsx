@@ -17,6 +17,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
 import { useAuth } from "../../state/auth";
+import { DateInput } from "../../../components/date-input";
 
 const PREGNANCY_OPTIONS: BreedingPregnancyResult[] = ["PENDING", "PREGNANT", "NOT_PREGNANT"];
 const CALF_GENDER_OPTIONS: BreedingCalfGender[] = ["MALE", "FEMALE", "UNKNOWN"];
@@ -858,20 +859,10 @@ export default function BreedingScreen() {
         <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
           {x("Heat Date (Required)", "हीट तारीख (जरूरी)")}
         </Text>
-        <TextInput
+        <DateInput
           value={heatDate}
           onChangeText={setHeatDate}
           placeholder="YYYY-MM-DD"
-          placeholderTextColor="#99A99A"
-          style={{
-            marginTop: 6,
-            borderWidth: 1,
-            borderColor: DairyColors.border,
-            borderRadius: 10,
-            padding: 11,
-            color: DairyColors.textPrimary,
-            backgroundColor: DairyColors.surfaceMuted,
-          }}
         />
 
         <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
@@ -879,40 +870,20 @@ export default function BreedingScreen() {
             <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
               {x("Insemination Date", "इंसेमिनेशन तारीख")}
             </Text>
-            <TextInput
+            <DateInput
               value={inseminationDate}
               onChangeText={setInseminationDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 6,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 11,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surfaceMuted,
-              }}
             />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
               {x("Pregnancy Check Date", "गर्भ जांच तारीख")}
             </Text>
-            <TextInput
+            <DateInput
               value={pregnancyCheckDate}
               onChangeText={setPregnancyCheckDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 6,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 11,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surfaceMuted,
-              }}
             />
           </View>
         </View>
@@ -966,40 +937,20 @@ export default function BreedingScreen() {
             <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
               {x("Expected Calving Date", "अपेक्षित बछड़ा तारीख")}
             </Text>
-            <TextInput
+            <DateInput
               value={expectedCalvingDate}
               onChangeText={setExpectedCalvingDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 6,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 11,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surfaceMuted,
-              }}
             />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
               {x("Actual Calving Date", "वास्तविक बछड़ा तारीख")}
             </Text>
-            <TextInput
+            <DateInput
               value={actualCalvingDate}
               onChangeText={setActualCalvingDate}
               placeholder="YYYY-MM-DD"
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 6,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 11,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surfaceMuted,
-              }}
             />
           </View>
         </View>

@@ -1,20 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, FlatList, Pressable, Switch, Text, TextInput, View } from "react-native";
+import { Alert, FlatList, Pressable, Share, Switch, Text, TextInput, View } from "react-native";
 import {
   AttendanceStatus,
+  CompensationAdjustmentType,
   EmployeeApi,
+  EmployeeAttendanceMonthlyReportResponse,
+  EmployeeCompensationAdjustmentResponse,
   EmployeeGovernmentIdType,
   EmployeeResponse,
   EmployeeType,
   ExpenseApi,
   PaymentMode,
+  SalaryComputationMode,
   Shift,
 } from "../../services/api";
 import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
 import { todayLocalISO } from "../../utils/date";
+import { DateInput } from "../../../components/date-input";
 
 const TYPE_OPTIONS: EmployeeType[] = ["FULL_TIME", "PART_TIME"];
 const GOVT_ID_OPTIONS: EmployeeGovernmentIdType[] = [
@@ -27,6 +32,19 @@ const GOVT_ID_OPTIONS: EmployeeGovernmentIdType[] = [
 ];
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "CREDIT"];
 const ATTENDANCE_SHIFTS: Shift[] = ["AM", "PM"];
+const SALARY_MODES: SalaryComputationMode[] = [
+  "NONE",
+  "DAILY",
+  "SHIFT",
+  "HOURLY",
+  "DAILY_PLUS_OVERTIME",
+];
+const COMP_ADJUSTMENT_TYPES: CompensationAdjustmentType[] = [
+  "ADVANCE",
+  "DEDUCTION",
+  "BONUS",
+  "PRODUCTION_INCENTIVE",
+];
 
 type AttendanceDraft = {
   status: AttendanceStatus;
@@ -89,11 +107,28 @@ function normalizeHoursForAttendance(status: AttendanceStatus, value: string): n
   return parsed;
 }
 
+function monthEndIso(month: string): string {
+  const trimmed = month.trim();
+  const match = /^(\d{4})-(\d{2})$/.exec(trimmed);
+  if (!match) {
+    return todayLocalISO();
+  }
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(monthIndex) || monthIndex < 1 || monthIndex > 12) {
+    return todayLocalISO();
+  }
+  const lastDay = new Date(year, monthIndex, 0).getDate();
+  return `${match[1]}-${match[2]}-${String(lastDay).padStart(2, "0")}`;
+}
+
 export default function EmployeesScreen() {
   const { hasAnyRole } = useAuth();
   const { x, label } = useI18n();
   const canManageEmployees = hasAnyRole("ADMIN");
   const canManageAttendance = hasAnyRole("ADMIN", "MANAGER");
+  const canViewPayrollAdjustments = hasAnyRole("ADMIN", "MANAGER");
+  const canManagePayrollAdjustments = hasAnyRole("ADMIN");
 
   const [employees, setEmployees] = useState<EmployeeResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -103,6 +138,26 @@ export default function EmployeesScreen() {
   const [attendanceDate, setAttendanceDate] = useState(todayLocalISO());
   const [attendanceShift, setAttendanceShift] = useState<Shift>("AM");
   const [attendanceByEmployeeId, setAttendanceByEmployeeId] = useState<Record<string, AttendanceDraft>>({});
+  const [monthlyReportMonth, setMonthlyReportMonth] = useState(todayLocalISO().slice(0, 7));
+  const [monthlyReport, setMonthlyReport] = useState<EmployeeAttendanceMonthlyReportResponse | null>(null);
+  const [monthlyReportLoading, setMonthlyReportLoading] = useState(false);
+  const [monthlyReportExporting, setMonthlyReportExporting] = useState(false);
+  const [compAdjustments, setCompAdjustments] = useState<EmployeeCompensationAdjustmentResponse[]>([]);
+  const [compAdjustmentsLoading, setCompAdjustmentsLoading] = useState(false);
+  const [compAdjustmentSaving, setCompAdjustmentSaving] = useState(false);
+  const [compAdjustmentEmployeeId, setCompAdjustmentEmployeeId] = useState<string>("");
+  const [compAdjustmentDate, setCompAdjustmentDate] = useState(todayLocalISO());
+  const [compAdjustmentType, setCompAdjustmentType] = useState<CompensationAdjustmentType>("ADVANCE");
+  const [compAdjustmentAmount, setCompAdjustmentAmount] = useState("");
+  const [compAdjustmentNotes, setCompAdjustmentNotes] = useState("");
+  const [salaryMode, setSalaryMode] = useState<SalaryComputationMode>("DAILY");
+  const [fullTimeDailyRate, setFullTimeDailyRate] = useState("900");
+  const [partTimeDailyRate, setPartTimeDailyRate] = useState("550");
+  const [fullTimeShiftRate, setFullTimeShiftRate] = useState("450");
+  const [partTimeShiftRate, setPartTimeShiftRate] = useState("300");
+  const [hourlyRate, setHourlyRate] = useState("90");
+  const [overtimeHourlyRate, setOvertimeHourlyRate] = useState("120");
+  const [standardHoursPerDay, setStandardHoursPerDay] = useState("8");
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
@@ -140,8 +195,39 @@ export default function EmployeesScreen() {
   };
 
   const paymentModeLabel = (mode: PaymentMode) => label("paymentMode", mode);
+  const salaryModeLabel = (mode: SalaryComputationMode) => {
+    if (mode === "NONE") return x("No salary calc", "कैल्कुलेशन नहीं");
+    if (mode === "DAILY") return x("Daily", "दैनिक");
+    if (mode === "SHIFT") return x("Shift", "शिफ्ट");
+    if (mode === "HOURLY") return x("Hourly", "घंटे के हिसाब से");
+    return x("Daily + OT", "दैनिक + ओटी");
+  };
+  const compAdjustmentTypeLabel = (type: CompensationAdjustmentType) => {
+    if (type === "ADVANCE") return x("Advance", "अग्रिम");
+    if (type === "DEDUCTION") return x("Deduction", "कटौती");
+    if (type === "BONUS") return x("Bonus", "बोनस");
+    return x("Production Incentive", "उत्पादन प्रोत्साहन");
+  };
+
+  const parseOptionalNonNegative = (value: string, fieldLabel: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(`${fieldLabel} must be a non-negative number.`);
+    }
+    return parsed;
+  };
 
   const activeEmployees = useMemo(() => employees.filter((employee) => employee.isActive), [employees]);
+
+  const employeesById = useMemo(() => {
+    const map = new Map<string, EmployeeResponse>();
+    employees.forEach((employee) => map.set(employee.employeeId, employee));
+    return map;
+  }, [employees]);
 
   const attendanceDraftFor = useCallback(
     (employee: EmployeeResponse): AttendanceDraft => {
@@ -165,7 +251,7 @@ export default function EmployeesScreen() {
   }, []);
 
   const loadAttendance = useCallback(
-    async (targetDate = attendanceDate, targetShift = attendanceShift) => {
+    async (targetDate: string, targetShift: Shift) => {
       if (!canManageAttendance) {
         setAttendanceByEmployeeId({});
         return;
@@ -207,7 +293,7 @@ export default function EmployeesScreen() {
         setAttendanceLoading(false);
       }
     },
-    [activeEmployees, attendanceDate, attendanceShift, canManageAttendance, x]
+    [activeEmployees, canManageAttendance, x]
   );
 
   const loadEmployees = useCallback(async () => {
@@ -234,8 +320,22 @@ export default function EmployeesScreen() {
       setAttendanceByEmployeeId({});
       return;
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate.trim())) {
+      return;
+    }
     loadAttendance(attendanceDate, attendanceShift);
-  }, [attendanceDate, attendanceShift, canManageAttendance, loadAttendance, activeEmployees.length]);
+  }, [canManageAttendance, loadAttendance, activeEmployees, attendanceDate, attendanceShift]);
+
+  useEffect(() => {
+    if (activeEmployees.length === 0) {
+      setCompAdjustmentEmployeeId("");
+      return;
+    }
+    const exists = activeEmployees.some((employee) => employee.employeeId === compAdjustmentEmployeeId);
+    if (!exists) {
+      setCompAdjustmentEmployeeId(activeEmployees[0].employeeId);
+    }
+  }, [activeEmployees, compAdjustmentEmployeeId]);
 
   const resetForm = () => {
     setEditingEmployeeId(null);
@@ -650,6 +750,213 @@ export default function EmployeesScreen() {
     }
   };
 
+  const buildMonthlyReportParams = () => {
+    if (!/^\d{4}-\d{2}$/.test(monthlyReportMonth.trim())) {
+      throw new Error("Month must be in YYYY-MM format.");
+    }
+    const standardHours = parseOptionalNonNegative(standardHoursPerDay, "Standard hours/day");
+    if (standardHours != null && (standardHours <= 0 || standardHours > 24)) {
+      throw new Error("Standard hours/day must be between 0 and 24.");
+    }
+    return {
+      month: monthlyReportMonth.trim(),
+      includeInactive: false,
+      includeAdjustments: true,
+      salaryMode,
+      fullTimeDailyRate: parseOptionalNonNegative(fullTimeDailyRate, "Full-time daily rate"),
+      partTimeDailyRate: parseOptionalNonNegative(partTimeDailyRate, "Part-time daily rate"),
+      fullTimeShiftRate: parseOptionalNonNegative(fullTimeShiftRate, "Full-time shift rate"),
+      partTimeShiftRate: parseOptionalNonNegative(partTimeShiftRate, "Part-time shift rate"),
+      hourlyRate: parseOptionalNonNegative(hourlyRate, "Hourly rate"),
+      overtimeHourlyRate: parseOptionalNonNegative(overtimeHourlyRate, "Overtime rate"),
+      standardHoursPerDay: standardHours,
+    };
+  };
+
+  const loadCompAdjustments = useCallback(
+    async (month: string, employeeId?: string) => {
+      if (!canViewPayrollAdjustments) {
+        setCompAdjustments([]);
+        return;
+      }
+      try {
+        setCompAdjustmentsLoading(true);
+        const rows = await EmployeeApi.listCompAdjustments({
+          month,
+          employeeId: employeeId?.trim() || undefined,
+        });
+        setCompAdjustments(rows);
+      } catch (e: any) {
+        console.error(e);
+        Alert.alert(
+          x("Load failed", "लोड नहीं हुआ"),
+          e?.message ?? x("Could not load payroll adjustments.", "पेरोल समायोजन लोड नहीं हुए।")
+        );
+      } finally {
+        setCompAdjustmentsLoading(false);
+      }
+    },
+    [canViewPayrollAdjustments, x]
+  );
+
+  useEffect(() => {
+    if (!canViewPayrollAdjustments) {
+      return;
+    }
+    if (!/^\d{4}-\d{2}$/.test(monthlyReportMonth.trim())) {
+      return;
+    }
+    void loadCompAdjustments(monthlyReportMonth.trim(), compAdjustmentEmployeeId);
+  }, [canViewPayrollAdjustments, monthlyReportMonth, compAdjustmentEmployeeId, loadCompAdjustments]);
+
+  const saveCompAdjustment = async () => {
+    if (!canManagePayrollAdjustments) {
+      Alert.alert(
+        x("Admin only", "सिर्फ एडमिन"),
+        x("Only ADMIN can add payroll adjustments.", "पेरोल समायोजन जोड़ना सिर्फ ADMIN कर सकता है।")
+      );
+      return;
+    }
+    if (!compAdjustmentEmployeeId.trim()) {
+      Alert.alert(x("Employee required", "कर्मचारी आवश्यक"), x("Select employee first.", "पहले कर्मचारी चुनें।"));
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(compAdjustmentDate.trim())) {
+      Alert.alert(
+        x("Invalid date", "गलत तारीख"),
+        x("Date must be in YYYY-MM-DD format.", "तारीख YYYY-MM-DD फॉर्मेट में होनी चाहिए।")
+      );
+      return;
+    }
+    const amount = Number(compAdjustmentAmount.trim());
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert(
+        x("Invalid amount", "गलत राशि"),
+        x("Amount must be greater than 0.", "राशि 0 से ज्यादा होनी चाहिए।")
+      );
+      return;
+    }
+    try {
+      setCompAdjustmentSaving(true);
+      await EmployeeApi.createCompAdjustment({
+        employeeId: compAdjustmentEmployeeId.trim(),
+        adjustmentDate: compAdjustmentDate.trim(),
+        adjustmentType: compAdjustmentType,
+        amount,
+        notes: normalizeOptionalInput(compAdjustmentNotes),
+      });
+      setCompAdjustmentAmount("");
+      setCompAdjustmentNotes("");
+      await Promise.all([
+        loadCompAdjustments(monthlyReportMonth.trim(), compAdjustmentEmployeeId),
+        loadMonthlyReport(),
+      ]);
+      Alert.alert(x("Saved", "सेव हुआ"), x("Payroll adjustment added.", "पेरोल समायोजन जोड़ दिया गया।"));
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Save failed", "सेव नहीं हुआ"),
+        e?.message ?? x("Could not save payroll adjustment.", "पेरोल समायोजन सेव नहीं हुआ।")
+      );
+    } finally {
+      setCompAdjustmentSaving(false);
+    }
+  };
+
+  const deleteCompAdjustment = async (row: EmployeeCompensationAdjustmentResponse) => {
+    if (!canManagePayrollAdjustments) {
+      return;
+    }
+    try {
+      await EmployeeApi.deleteCompAdjustment(row.adjustmentId);
+      await Promise.all([
+        loadCompAdjustments(monthlyReportMonth.trim(), compAdjustmentEmployeeId),
+        loadMonthlyReport(),
+      ]);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Delete failed", "हट नहीं पाया"),
+        e?.message ?? x("Could not delete payroll adjustment.", "पेरोल समायोजन हट नहीं पाया।")
+      );
+    }
+  };
+
+  const loadMonthlyReport = async () => {
+    if (!canManageAttendance) {
+      return;
+    }
+    try {
+      const params = buildMonthlyReportParams();
+      setMonthlyReportLoading(true);
+      const report = await EmployeeApi.monthlyAttendance(params);
+      setMonthlyReport(report);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Load failed", "लोड नहीं हुआ"),
+        e?.message ?? x("Could not load monthly attendance report.", "मासिक उपस्थिति रिपोर्ट लोड नहीं हुई।")
+      );
+    } finally {
+      setMonthlyReportLoading(false);
+    }
+  };
+
+  const exportMonthlyReportCsv = async () => {
+    if (!canManageAttendance) {
+      return;
+    }
+    try {
+      const params = buildMonthlyReportParams();
+      setMonthlyReportExporting(true);
+      const csv = await EmployeeApi.exportMonthlyAttendanceCsv(params);
+      if (!csv.trim()) {
+        Alert.alert(x("Empty export", "खाली एक्सपोर्ट"), x("No rows available for export.", "एक्सपोर्ट के लिए रिकॉर्ड नहीं हैं।"));
+        return;
+      }
+      await Share.share({
+        message: csv,
+        title: `attendance-${params.month}.csv`,
+      });
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Export failed", "एक्सपोर्ट नहीं हुआ"),
+        e?.message ?? x("Could not export monthly attendance CSV.", "मासिक उपस्थिति CSV एक्सपोर्ट नहीं हुआ।")
+      );
+    } finally {
+      setMonthlyReportExporting(false);
+    }
+  };
+
+  const applySuggestedSalaryFromReport = (
+    row: EmployeeAttendanceMonthlyReportResponse["rows"][number]
+  ) => {
+    if (!canManageEmployees) {
+      Alert.alert(
+        x("Admin only", "सिर्फ एडमिन"),
+        x("Only ADMIN users can record salary payments.", "सैलरी भुगतान रिकॉर्ड सिर्फ ADMIN कर सकता है।")
+      );
+      return;
+    }
+    const employee = employeesById.get(row.employeeId);
+    if (!employee) {
+      Alert.alert(
+        x("Employee not found", "कर्मचारी नहीं मिला"),
+        x("Reload employees and try again.", "कर्मचारी सूची रीलोड करके फिर से कोशिश करें।")
+      );
+      return;
+    }
+    setSalaryEmployee(employee);
+    setSalaryDate(monthEndIso(monthlyReportMonth));
+    setSalaryAmount(row.netPayableSalary.toFixed(2));
+    setSalaryPaymentMode("UPI");
+    setSalaryReferenceNo("");
+    setSalaryNotes(
+      `Attendance ${monthlyReportMonth} | ${salaryMode} | Gross ${row.grossSalary} | Net ${row.netPayableSalary}`
+    );
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
@@ -738,21 +1045,13 @@ export default function EmployeesScreen() {
                 </Text>
 
                 <View style={{ marginTop: 10, flexDirection: "row", gap: 8, alignItems: "center" }}>
-                  <TextInput
-                    style={{
-                      flex: 1,
-                      borderWidth: 1,
-                      borderColor: DairyColors.border,
-                      borderRadius: 10,
-                      padding: 11,
-                      color: DairyColors.textPrimary,
-                      backgroundColor: DairyColors.surfaceMuted,
-                    }}
+                  <View style={{ flex: 1 }}>
+                    <DateInput
                     placeholder={x("Attendance date (YYYY-MM-DD)", "उपस्थिति तारीख (YYYY-MM-DD)")}
-                    placeholderTextColor="#99A99A"
                     value={attendanceDate}
                     onChangeText={setAttendanceDate}
-                  />
+                    />
+                  </View>
                   <Pressable
                     onPress={() => loadAttendance(attendanceDate, attendanceShift)}
                     style={{
@@ -810,6 +1109,602 @@ export default function EmployeesScreen() {
               </View>
             ) : null}
 
+            {canManageAttendance ? (
+              <View
+                style={{
+                  marginTop: 14,
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  borderRadius: 14,
+                  padding: 14,
+                  backgroundColor: DairyColors.surface,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
+                  {x("Monthly Attendance Report", "मासिक उपस्थिति रिपोर्ट")}
+                </Text>
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x(
+                    "Per-employee totals with gross/net salary (attendance + adjustments).",
+                    "हर कर्मचारी का सारांश, ग्रॉस/नेट सैलरी (उपस्थिति + समायोजन)।"
+                  )}
+                </Text>
+
+                <TextInput
+                  style={{
+                    marginTop: 10,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    padding: 11,
+                    color: DairyColors.textPrimary,
+                    backgroundColor: DairyColors.surfaceMuted,
+                  }}
+                  placeholder={x("Month (YYYY-MM)", "महीना (YYYY-MM)")}
+                  placeholderTextColor="#99A99A"
+                  value={monthlyReportMonth}
+                  onChangeText={setMonthlyReportMonth}
+                />
+
+                <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {x("Salary Suggestion Mode", "सैलरी सुझाव मोड")}
+                </Text>
+                <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {SALARY_MODES.map((mode) => {
+                    const selected = salaryMode === mode;
+                    return (
+                      <Pressable
+                        key={mode}
+                        onPress={() => setSalaryMode(mode)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: selected ? DairyColors.primary : DairyColors.border,
+                          backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                          borderRadius: 999,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{salaryModeLabel(mode)}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {(salaryMode === "DAILY" || salaryMode === "DAILY_PLUS_OVERTIME") ? (
+                  <View style={{ marginTop: 10 }}>
+                    <TextInput
+                      style={{
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Full-time daily rate", "फुल-टाइम दैनिक दर")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={fullTimeDailyRate}
+                      onChangeText={setFullTimeDailyRate}
+                    />
+                    <TextInput
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Part-time daily rate", "पार्ट-टाइम दैनिक दर")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={partTimeDailyRate}
+                      onChangeText={setPartTimeDailyRate}
+                    />
+                  </View>
+                ) : null}
+
+                {salaryMode === "SHIFT" ? (
+                  <View style={{ marginTop: 10 }}>
+                    <TextInput
+                      style={{
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Full-time shift rate", "फुल-टाइम शिफ्ट दर")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={fullTimeShiftRate}
+                      onChangeText={setFullTimeShiftRate}
+                    />
+                    <TextInput
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Part-time shift rate", "पार्ट-टाइम शिफ्ट दर")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={partTimeShiftRate}
+                      onChangeText={setPartTimeShiftRate}
+                    />
+                  </View>
+                ) : null}
+
+                {salaryMode === "HOURLY" ? (
+                  <TextInput
+                    style={{
+                      marginTop: 10,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 11,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surfaceMuted,
+                    }}
+                    placeholder={x("Hourly rate", "घंटे की दर")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={hourlyRate}
+                    onChangeText={setHourlyRate}
+                  />
+                ) : null}
+
+                {salaryMode === "DAILY_PLUS_OVERTIME" ? (
+                  <View style={{ marginTop: 10 }}>
+                    <TextInput
+                      style={{
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Overtime hourly rate", "ओवरटाइम घंटे की दर")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={overtimeHourlyRate}
+                      onChangeText={setOvertimeHourlyRate}
+                    />
+                    <TextInput
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Standard hours/day", "स्टैंडर्ड घंटे/दिन")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={standardHoursPerDay}
+                      onChangeText={setStandardHoursPerDay}
+                    />
+                  </View>
+                ) : null}
+
+                <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
+                  <Pressable
+                    disabled={monthlyReportLoading}
+                    onPress={() => void loadMonthlyReport()}
+                    style={{
+                      flex: 1,
+                      padding: 12,
+                      borderRadius: 10,
+                      backgroundColor: monthlyReportLoading ? DairyColors.textSecondary : DairyColors.primary,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: "white", fontWeight: "800" }}>
+                      {monthlyReportLoading ? x("Loading...", "लोड...") : x("Load Report", "रिपोर्ट लोड करें")}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={monthlyReportExporting}
+                    onPress={() => void exportMonthlyReportCsv()}
+                    style={{
+                      flex: 1,
+                      padding: 12,
+                      borderRadius: 10,
+                      backgroundColor: monthlyReportExporting ? DairyColors.textSecondary : DairyColors.info,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: "white", fontWeight: "800" }}>
+                      {monthlyReportExporting ? x("Exporting...", "एक्सपोर्ट...") : x("Export CSV", "CSV एक्सपोर्ट")}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {monthlyReport ? (
+                  <View style={{ marginTop: 12 }}>
+                    <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 100,
+                          backgroundColor: DairyColors.accentSoft,
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Employees", "कर्मचारी")}</Text>
+                        <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {monthlyReport.totalEmployees}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 100,
+                          backgroundColor: DairyColors.successSoft,
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Present Days", "उपस्थित दिन")}</Text>
+                        <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {monthlyReport.totalPresentDays}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 120,
+                          backgroundColor: DairyColors.warningSoft,
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Suggested Salary", "सुझाव सैलरी")}</Text>
+                        <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {`Rs ${monthlyReport.totalSuggestedSalary.toFixed(2)}`}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 120,
+                          backgroundColor: DairyColors.infoSoft,
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Gross Salary", "ग्रॉस सैलरी")}</Text>
+                        <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {`Rs ${monthlyReport.totalGrossSalary.toFixed(2)}`}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: 120,
+                          backgroundColor: DairyColors.successSoft,
+                          borderRadius: 10,
+                          padding: 10,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Net Payable", "नेट देय")}</Text>
+                        <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {`Rs ${monthlyReport.totalNetPayableSalary.toFixed(2)}`}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {monthlyReport.rows.length === 0 ? (
+                      <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
+                        {x("No attendance rows for selected month.", "चुने हुए महीने के लिए रिकॉर्ड नहीं मिले।")}
+                      </Text>
+                    ) : (
+                      monthlyReport.rows.map((row) => (
+                        <View
+                          key={`monthly-${row.employeeId}`}
+                          style={{
+                            marginTop: 10,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            padding: 10,
+                            backgroundColor: DairyColors.surfaceMuted,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                            {row.employeeName || row.employeeId}
+                          </Text>
+                          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                            {`${x("Present", "उपस्थित")}: ${row.presentDays} | ${x("Absent", "अनुपस्थित")}: ${row.absentDays}`}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {`${x("Shifts", "शिफ्ट")}: ${row.presentShifts}/${row.shiftsMarked} | ${x("Hours", "घंटे")}: ${row.totalHoursWorked.toFixed(2)}`}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {`${x("Suggested", "सुझाव")}: Rs ${row.suggestedSalary.toFixed(2)}`}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {`${x("Adj", "समायोजन")} | ${x("Bonus", "बोनस")}: Rs ${row.bonusAmount.toFixed(2)} | ${x("Incentive", "प्रोत्साहन")}: Rs ${row.productionIncentiveAmount.toFixed(2)}`}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {`${x("Advance", "अग्रिम")}: Rs ${row.advanceAmount.toFixed(2)} | ${x("Deduction", "कटौती")}: Rs ${row.deductionAmount.toFixed(2)}`}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {`${x("Gross", "ग्रॉस")}: Rs ${row.grossSalary.toFixed(2)} | ${x("Net", "नेट")}: Rs ${row.netPayableSalary.toFixed(2)}`}
+                          </Text>
+
+                          {canManageEmployees ? (
+                            <Pressable
+                              onPress={() => applySuggestedSalaryFromReport(row)}
+                              style={{
+                                marginTop: 8,
+                                borderWidth: 1,
+                                borderColor: DairyColors.primary,
+                                borderRadius: 8,
+                                alignSelf: "flex-start",
+                                paddingHorizontal: 10,
+                                paddingVertical: 7,
+                                backgroundColor: DairyColors.primarySoft,
+                              }}
+                            >
+                              <Text style={{ color: DairyColors.primary, fontWeight: "700" }}>
+                                {x("Use Net Payable", "नेट देय भरें")}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ))
+                    )}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            {canViewPayrollAdjustments ? (
+              <View
+                style={{
+                  marginTop: 14,
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  borderRadius: 14,
+                  padding: 14,
+                  backgroundColor: DairyColors.surface,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
+                  {x("Payroll Adjustments", "पेरोल समायोजन")}
+                </Text>
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x(
+                    "Track advances, deductions, bonuses and production incentives month-wise.",
+                    "महीने के हिसाब से अग्रिम, कटौती, बोनस और उत्पादन प्रोत्साहन ट्रैक करें।"
+                  )}
+                </Text>
+
+                <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ marginBottom: 6, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                      {x("Month", "महीना")}
+                    </Text>
+                    <TextInput
+                      style={{
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("YYYY-MM", "YYYY-MM")}
+                      placeholderTextColor="#99A99A"
+                      value={monthlyReportMonth}
+                      onChangeText={setMonthlyReportMonth}
+                    />
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      if (!/^\d{4}-\d{2}$/.test(monthlyReportMonth.trim())) {
+                        Alert.alert(
+                          x("Invalid month", "गलत महीना"),
+                          x("Month must be in YYYY-MM format.", "महीना YYYY-MM फॉर्मेट में हो।")
+                        );
+                        return;
+                      }
+                      void loadCompAdjustments(monthlyReportMonth.trim(), compAdjustmentEmployeeId);
+                    }}
+                    style={{
+                      alignSelf: "flex-end",
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 11,
+                      backgroundColor: DairyColors.surfaceMuted,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                      {compAdjustmentsLoading ? x("Loading...", "लोड...") : x("Reload", "रीलोड")}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {x("Employee", "कर्मचारी")}
+                </Text>
+                <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {activeEmployees.map((employee) => {
+                    const selected = compAdjustmentEmployeeId === employee.employeeId;
+                    return (
+                      <Pressable
+                        key={`comp-emp-${employee.employeeId}`}
+                        onPress={() => setCompAdjustmentEmployeeId(employee.employeeId)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: selected ? DairyColors.primary : DairyColors.border,
+                          borderRadius: 999,
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                          {employee.name || employee.employeeId}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {canManagePayrollAdjustments ? (
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                      {x("Type", "प्रकार")}
+                    </Text>
+                    <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {COMP_ADJUSTMENT_TYPES.map((type) => {
+                        const selected = compAdjustmentType === type;
+                        return (
+                          <Pressable
+                            key={`adj-type-${type}`}
+                            onPress={() => setCompAdjustmentType(type)}
+                            style={{
+                              borderWidth: 1,
+                              borderColor: selected ? DairyColors.primary : DairyColors.border,
+                              borderRadius: 999,
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                              backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                              {compAdjustmentTypeLabel(type)}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+
+                    <DateInput
+                      placeholder={x("Adjustment date (YYYY-MM-DD)", "समायोजन तारीख (YYYY-MM-DD)")}
+                      value={compAdjustmentDate}
+                      onChangeText={setCompAdjustmentDate}
+                    />
+                    <TextInput
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Amount", "राशि")}
+                      placeholderTextColor="#99A99A"
+                      keyboardType="decimal-pad"
+                      value={compAdjustmentAmount}
+                      onChangeText={setCompAdjustmentAmount}
+                    />
+                    <TextInput
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 11,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                      placeholder={x("Notes (optional)", "नोट्स (वैकल्पिक)")}
+                      placeholderTextColor="#99A99A"
+                      value={compAdjustmentNotes}
+                      onChangeText={setCompAdjustmentNotes}
+                    />
+                    <Pressable
+                      disabled={compAdjustmentSaving}
+                      onPress={() => void saveCompAdjustment()}
+                      style={{
+                        marginTop: 8,
+                        borderRadius: 10,
+                        padding: 12,
+                        backgroundColor: compAdjustmentSaving ? DairyColors.textSecondary : DairyColors.primary,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ color: "white", fontWeight: "800" }}>
+                        {compAdjustmentSaving ? x("Saving...", "सेव...") : x("Add Adjustment", "समायोजन जोड़ें")}
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                <View style={{ marginTop: 12 }}>
+                  {compAdjustments.length === 0 ? (
+                    <Text style={{ color: DairyColors.textSecondary }}>
+                      {compAdjustmentsLoading
+                        ? x("Loading adjustments...", "समायोजन लोड हो रहे हैं...")
+                        : x("No adjustments found for selected filter.", "चुने फ़िल्टर के लिए कोई समायोजन नहीं मिला।")}
+                    </Text>
+                  ) : (
+                    compAdjustments.map((row) => (
+                      <View
+                        key={row.adjustmentId}
+                        style={{
+                          marginTop: 8,
+                          borderWidth: 1,
+                          borderColor: DairyColors.border,
+                          borderRadius: 10,
+                          padding: 10,
+                          backgroundColor: DairyColors.surfaceMuted,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {(row.employeeName || row.employeeId) + " | " + compAdjustmentTypeLabel(row.adjustmentType)}
+                        </Text>
+                        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+                          {`${row.adjustmentDate} | Rs ${row.amount.toFixed(2)}`}
+                        </Text>
+                        {row.notes ? (
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{row.notes}</Text>
+                        ) : null}
+                        {canManagePayrollAdjustments ? (
+                          <Pressable
+                            onPress={() => void deleteCompAdjustment(row)}
+                            style={{
+                              marginTop: 8,
+                              borderWidth: 1,
+                              borderColor: DairyColors.danger,
+                              borderRadius: 8,
+                              alignSelf: "flex-start",
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              backgroundColor: "#FDECEC",
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.danger, fontWeight: "700" }}>
+                              {x("Delete", "हटाएं")}
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    ))
+                  )}
+                </View>
+              </View>
+            ) : null}
+
             {salaryEmployee ? (
               <View
                 style={{
@@ -828,18 +1723,8 @@ export default function EmployeesScreen() {
                   {x("Employee", "कर्मचारी")}: {salaryEmployee.name} ({salaryEmployee.employeeId})
                 </Text>
 
-                <TextInput
-                  style={{
-                    marginTop: 10,
-                    borderWidth: 1,
-                    borderColor: DairyColors.border,
-                    borderRadius: 10,
-                    padding: 11,
-                    color: DairyColors.textPrimary,
-                    backgroundColor: DairyColors.surfaceMuted,
-                  }}
+                <DateInput
                   placeholder={x("Payment date (YYYY-MM-DD)", "भुगतान तारीख (YYYY-MM-DD)")}
-                  placeholderTextColor="#99A99A"
                   value={salaryDate}
                   onChangeText={setSalaryDate}
                 />
@@ -1052,18 +1937,8 @@ export default function EmployeesScreen() {
                 <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
                   {x("Joining Date", "जॉइन तारीख")}
                 </Text>
-                <TextInput
-                  style={{
-                    marginTop: 6,
-                    borderWidth: 1,
-                    borderColor: DairyColors.border,
-                    borderRadius: 10,
-                    padding: 11,
-                    color: DairyColors.textPrimary,
-                    backgroundColor: DairyColors.surfaceMuted,
-                  }}
+                <DateInput
                   placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
-                  placeholderTextColor="#99A99A"
                   value={joinDate}
                   onChangeText={setJoinDate}
                 />

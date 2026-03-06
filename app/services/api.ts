@@ -45,6 +45,7 @@ export type EmployeeGovernmentIdType =
   | "PASSPORT"
   | "OTHER";
 export type AttendanceStatus = "PRESENT" | "ABSENT";
+export type CompensationAdjustmentType = "ADVANCE" | "DEDUCTION" | "BONUS" | "PRODUCTION_INCENTIVE";
 export type UserRole = "ADMIN" | "MANAGER" | "WORKER" | "FEED_MANAGER" | "DELIVERY" | "VET";
 export type FeedRationPhase = "LACTATING" | "PREGNANT" | "DRY" | "CALF" | "SICK_RECOVERY";
 export type FeedMaterialCategory =
@@ -88,6 +89,25 @@ export type MilkBatchResponse = {
   qcStatus: QcStatus;
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type MilkBatchQcEvaluationResponse = {
+  date: string;
+  shift: Shift;
+  recommendedQcStatus: QcStatus;
+  reviewedEntries: number;
+  passEntries: number;
+  holdEntries: number;
+  rejectEntries: number;
+  lowFatHoldCount: number;
+  lowFatRejectCount: number;
+  lowSnfHoldCount: number;
+  lowSnfRejectCount: number;
+  highTemperatureHoldCount: number;
+  lactometerOutOfRangeHoldCount: number;
+  badSmellHoldCount: number;
+  explicitRejectCount: number;
+  triggerCodes: string[];
 };
 
 export type AnimalResponse = {
@@ -182,6 +202,8 @@ export type EmployeeAttendanceResponse = {
   updatedAt?: string;
 };
 
+export type SalaryComputationMode = "NONE" | "DAILY" | "SHIFT" | "HOURLY" | "DAILY_PLUS_OVERTIME";
+
 export type UpsertEmployeeAttendancePayload = {
   employeeId: string;
   attendanceDate: string;
@@ -193,6 +215,96 @@ export type UpsertEmployeeAttendancePayload = {
 
 export type BulkUpsertEmployeeAttendancePayload = {
   entries: UpsertEmployeeAttendancePayload[];
+};
+
+export type EmployeeAttendanceMonthlyRowResponse = {
+  employeeId: string;
+  employeeName?: string | null;
+  employeeType: EmployeeType;
+  active: boolean;
+  workingDaysInMonth: number;
+  presentDays: number;
+  absentDays: number;
+  presentShifts: number;
+  absentShifts: number;
+  shiftsMarked: number;
+  totalHoursWorked: number;
+  avgHoursPerPresentDay: number;
+  overtimeHours: number;
+  suggestedSalary: number;
+  bonusAmount: number;
+  productionIncentiveAmount: number;
+  advanceAmount: number;
+  deductionAmount: number;
+  grossSalary: number;
+  netPayableSalary: number;
+};
+
+export type EmployeeAttendanceMonthlyReportResponse = {
+  month: string;
+  dateFrom: string;
+  dateTo: string;
+  includeInactive: boolean;
+  includeAdjustments: boolean;
+  salaryMode: SalaryComputationMode;
+  fullTimeDailyRate: number;
+  partTimeDailyRate: number;
+  fullTimeShiftRate: number;
+  partTimeShiftRate: number;
+  hourlyRate: number;
+  overtimeHourlyRate: number;
+  standardHoursPerDay: number;
+  totalEmployees: number;
+  totalPresentDays: number;
+  totalAbsentDays: number;
+  totalPresentShifts: number;
+  totalAbsentShifts: number;
+  totalHoursWorked: number;
+  totalOvertimeHours: number;
+  totalSuggestedSalary: number;
+  totalBonusAmount: number;
+  totalProductionIncentiveAmount: number;
+  totalAdvanceAmount: number;
+  totalDeductionAmount: number;
+  totalGrossSalary: number;
+  totalNetPayableSalary: number;
+  rows: EmployeeAttendanceMonthlyRowResponse[];
+};
+
+export type EmployeeAttendanceMonthlyReportParams = {
+  month: string;
+  includeInactive?: boolean;
+  includeAdjustments?: boolean;
+  salaryMode?: SalaryComputationMode;
+  fullTimeDailyRate?: number | null;
+  partTimeDailyRate?: number | null;
+  fullTimeShiftRate?: number | null;
+  partTimeShiftRate?: number | null;
+  hourlyRate?: number | null;
+  overtimeHourlyRate?: number | null;
+  standardHoursPerDay?: number | null;
+};
+
+export type EmployeeCompensationAdjustmentResponse = {
+  adjustmentId: string;
+  employeeId: string;
+  employeeName?: string | null;
+  adjustmentMonth: string;
+  adjustmentDate: string;
+  adjustmentType: CompensationAdjustmentType;
+  amount: number;
+  notes?: string | null;
+  createdByUsername?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CreateEmployeeCompensationAdjustmentPayload = {
+  employeeId: string;
+  adjustmentDate: string;
+  adjustmentType: CompensationAdjustmentType;
+  amount: number;
+  notes?: string | null;
 };
 
 export type SeedMvpResponse = {
@@ -383,6 +495,12 @@ export type DeliveryTaskResponse = {
   taskDate: string;
   taskShift?: Shift | null;
   preferredTime?: string | null;
+  optimizedStopOrder?: number | null;
+  plannedEta?: string | null;
+  slaDueTime?: string | null;
+  slaBreached?: boolean | null;
+  slaDelayMinutes?: number | null;
+  optimizedAt?: string | null;
   customerId?: string | null;
   customerName: string;
   assignedToUsername?: string | null;
@@ -438,7 +556,37 @@ export type UpdateDeliveryTaskStatusPayload = {
   status?: DeliveryTaskStatus;
   deliveredQtyLiters?: number | null;
   collectedAmount?: number | null;
+  overrideWithdrawalLock?: boolean | null;
+  overrideReason?: string | null;
   notes?: string | null;
+};
+
+export type UpdateDeliveryTaskStatusBulkItemPayload = {
+  deliveryTaskId: string;
+  status: DeliveryTaskStatus;
+  deliveredQtyLiters?: number | null;
+  collectedAmount?: number | null;
+  overrideWithdrawalLock?: boolean | null;
+  overrideReason?: string | null;
+  notes?: string | null;
+};
+
+export type UpdateDeliveryTaskStatusBulkPayload = {
+  items: UpdateDeliveryTaskStatusBulkItemPayload[];
+};
+
+export type UpdateDeliveryTaskStatusBulkItemResponse = {
+  deliveryTaskId?: string | null;
+  success: boolean;
+  errorMessage?: string | null;
+  task?: DeliveryTaskResponse | null;
+};
+
+export type UpdateDeliveryTaskStatusBulkResponse = {
+  totalCount: number;
+  successCount: number;
+  failedCount: number;
+  items: UpdateDeliveryTaskStatusBulkItemResponse[];
 };
 
 export type AssignDeliveryTaskPayload = {
@@ -457,6 +605,9 @@ export type DeliveryReconciliationRowResponse = {
   deliveredQty: number;
   collectedAmount: number;
   pendingAmount: number;
+  onTimeDeliveredTasks: number;
+  slaBreachedDeliveredTasks: number;
+  avgDelayMinutesForDelivered: number;
 };
 
 export type DeliveryRunClosureResponse = {
@@ -505,6 +656,30 @@ export type SubscriptionGenerationPreviewResponse = {
   eligibleCandidates: number;
   skippedCandidates: number;
   items: SubscriptionGenerationPreviewItemResponse[];
+};
+
+export type DeliveryDayPlanTriggerResponse = {
+  date: string;
+  generatedTasks: number;
+  autoAssignedTasks: number;
+  optimizedTasks: number;
+  optimizedRoutes: number;
+  totalTasks: number;
+  pendingTasks: number;
+  unassignedPendingTasks: number;
+  actor: string;
+};
+
+export type DeliveryRouteOptimizationResponse = {
+  date: string;
+  shift?: Shift | null;
+  routeName?: string | null;
+  optimizedTasks: number;
+  optimizedRoutes: number;
+  pendingTasksInScope: number;
+  deliveredTasksInScope: number;
+  actor: string;
+  optimizedAt?: string | null;
 };
 
 export type RecordDeliveryRunClosurePayload = {
@@ -662,6 +837,44 @@ export type CustomerLedgerRowResponse = {
   totalPending: number;
   totalQuantity: number;
   totalTransactions: number;
+};
+
+export type CustomerSubscriptionStatementDailyRowResponse = {
+  date: string;
+  dayOfWeek: string;
+  status: string;
+  expectedQty: number;
+  expectedAmount: number;
+};
+
+export type CustomerSubscriptionStatementResponse = {
+  customerId: string;
+  customerName: string;
+  month: string;
+  dateFrom: string;
+  dateTo: string;
+  subscriptionActive: boolean;
+  pricingMode: string;
+  cycleDays: number;
+  baselinePlanDays: number;
+  activePlanDays: number;
+  pausedDays: number;
+  skipDays: number;
+  billedDays: number;
+  prorationFactor: number;
+  baselinePlanQty: number;
+  baselinePlanAmount: number;
+  plannedQty: number;
+  plannedAmount: number;
+  holidayCreditAmount: number;
+  billedQty: number;
+  billedAmount: number;
+  receivedAmount: number;
+  pendingAmount: number;
+  expectedVsBilledVariance: number;
+  currentRunningBalance: number;
+  totalPaidToDate: number;
+  dailyRows: CustomerSubscriptionStatementDailyRowResponse[];
 };
 
 export type SettlementReconciliationRowResponse = {
@@ -1228,6 +1441,41 @@ export function setApiAuthToken(token: string | null) {
   AUTH_TOKEN = token;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(
+          new Error(`Request timed out. Check API URL/network. Current BASE_URL: ${API_BASE_URL}`)
+        );
+      }, REQUEST_TIMEOUT_MS);
+    });
+
+    const response = await Promise.race([
+      fetch(url, {
+        ...options,
+        signal: controller.signal,
+      }),
+      timeoutPromise,
+    ]);
+
+    return response as Response;
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error(`Request timed out. Check API URL/network. Current BASE_URL: ${API_BASE_URL}`);
+    }
+    throw e;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 async function http<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
   const isFormData = typeof FormData !== "undefined" && options?.body instanceof FormData;
@@ -1238,25 +1486,14 @@ async function http<T>(url: string, options?: RequestInit): Promise<T> {
     headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchWithTimeout(url, {
       headers,
       ...options,
-      signal: controller.signal,
     });
-  } catch (e: any) {
-    if (e?.name === "AbortError") {
-      throw new Error(
-        `Request timed out. Check API URL/network. Current BASE_URL: ${API_BASE_URL}`
-      );
-    }
+  } catch (e) {
     throw e;
-  } finally {
-    clearTimeout(timeoutId);
   }
 
   const text = await res.text().catch(() => "");
@@ -1266,10 +1503,38 @@ async function http<T>(url: string, options?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : null) as T;
 }
 
+async function httpText(url: string, options?: RequestInit): Promise<string> {
+  const headers = new Headers(options?.headers);
+  if (AUTH_TOKEN) {
+    headers.set("Authorization", `Bearer ${AUTH_TOKEN}`);
+  }
+
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(url, {
+      headers,
+      ...options,
+    });
+  } catch (e) {
+    throw e;
+  }
+
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  return text;
+}
+
 export const MilkApi = {
   getBatch: (date: string, shift: Shift) =>
     http<MilkBatchResponse | null>(
       `${API_BASE_URL}/api/milk-batches?date=${date}&shift=${shift}`
+    ),
+
+  getQcEvaluation: (date: string, shift: Shift) =>
+    http<MilkBatchQcEvaluationResponse>(
+      `${API_BASE_URL}/api/milk-batches/qc-evaluation?date=${date}&shift=${shift}`
     ),
 
   saveBatch: (payload: { date: string; shift: Shift; totalLiters: number }) =>
@@ -1278,7 +1543,13 @@ export const MilkApi = {
       body: JSON.stringify(payload),
     }),
 
-  updateQc: (payload: { date: string; shift: Shift; qcStatus: QcStatus }) =>
+  updateQc: (payload: {
+    date: string;
+    shift: Shift;
+    qcStatus: QcStatus;
+    overrideRecommendedStatus?: boolean | null;
+    overrideReason?: string | null;
+  }) =>
     http<MilkBatchResponse>(`${API_BASE_URL}/api/milk-batches/qc`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1404,6 +1675,106 @@ export const EmployeeApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  monthlyAttendance: (params: EmployeeAttendanceMonthlyReportParams) => {
+    const search = new URLSearchParams();
+    search.set("month", params.month);
+    if (params.includeInactive !== undefined) {
+      search.set("includeInactive", String(params.includeInactive));
+    }
+    if (params.includeAdjustments !== undefined) {
+      search.set("includeAdjustments", String(params.includeAdjustments));
+    }
+    if (params.salaryMode) {
+      search.set("salaryMode", params.salaryMode);
+    }
+    if (params.fullTimeDailyRate != null) {
+      search.set("fullTimeDailyRate", String(params.fullTimeDailyRate));
+    }
+    if (params.partTimeDailyRate != null) {
+      search.set("partTimeDailyRate", String(params.partTimeDailyRate));
+    }
+    if (params.fullTimeShiftRate != null) {
+      search.set("fullTimeShiftRate", String(params.fullTimeShiftRate));
+    }
+    if (params.partTimeShiftRate != null) {
+      search.set("partTimeShiftRate", String(params.partTimeShiftRate));
+    }
+    if (params.hourlyRate != null) {
+      search.set("hourlyRate", String(params.hourlyRate));
+    }
+    if (params.overtimeHourlyRate != null) {
+      search.set("overtimeHourlyRate", String(params.overtimeHourlyRate));
+    }
+    if (params.standardHoursPerDay != null) {
+      search.set("standardHoursPerDay", String(params.standardHoursPerDay));
+    }
+    return http<EmployeeAttendanceMonthlyReportResponse>(
+      `${API_BASE_URL}/api/employees/attendance/monthly?${search.toString()}`
+    );
+  },
+
+  exportMonthlyAttendanceCsv: (params: EmployeeAttendanceMonthlyReportParams) => {
+    const search = new URLSearchParams();
+    search.set("month", params.month);
+    if (params.includeInactive !== undefined) {
+      search.set("includeInactive", String(params.includeInactive));
+    }
+    if (params.includeAdjustments !== undefined) {
+      search.set("includeAdjustments", String(params.includeAdjustments));
+    }
+    if (params.salaryMode) {
+      search.set("salaryMode", params.salaryMode);
+    }
+    if (params.fullTimeDailyRate != null) {
+      search.set("fullTimeDailyRate", String(params.fullTimeDailyRate));
+    }
+    if (params.partTimeDailyRate != null) {
+      search.set("partTimeDailyRate", String(params.partTimeDailyRate));
+    }
+    if (params.fullTimeShiftRate != null) {
+      search.set("fullTimeShiftRate", String(params.fullTimeShiftRate));
+    }
+    if (params.partTimeShiftRate != null) {
+      search.set("partTimeShiftRate", String(params.partTimeShiftRate));
+    }
+    if (params.hourlyRate != null) {
+      search.set("hourlyRate", String(params.hourlyRate));
+    }
+    if (params.overtimeHourlyRate != null) {
+      search.set("overtimeHourlyRate", String(params.overtimeHourlyRate));
+    }
+    if (params.standardHoursPerDay != null) {
+      search.set("standardHoursPerDay", String(params.standardHoursPerDay));
+    }
+    return httpText(`${API_BASE_URL}/api/employees/attendance/monthly/export?${search.toString()}`, {
+      headers: {
+        Accept: "text/csv",
+      },
+    });
+  },
+
+  listCompAdjustments: (params: { month: string; employeeId?: string }) => {
+    const search = new URLSearchParams();
+    search.set("month", params.month);
+    if (params.employeeId) {
+      search.set("employeeId", params.employeeId);
+    }
+    return http<EmployeeCompensationAdjustmentResponse[]>(
+      `${API_BASE_URL}/api/employees/attendance/adjustments?${search.toString()}`
+    );
+  },
+
+  createCompAdjustment: (payload: CreateEmployeeCompensationAdjustmentPayload) =>
+    http<EmployeeCompensationAdjustmentResponse>(`${API_BASE_URL}/api/employees/attendance/adjustments`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteCompAdjustment: (adjustmentId: string) =>
+    http<void>(`${API_BASE_URL}/api/employees/attendance/adjustments/${encodeURIComponent(adjustmentId)}`, {
+      method: "DELETE",
+    }),
 };
 
 export const AdminApi = {
@@ -1509,6 +1880,20 @@ export const SalesApi = {
       `${API_BASE_URL}/api/sales/ledger?dateFrom=${dateFrom}&dateTo=${dateTo ?? dateFrom}`
     ),
 
+  subscriptionStatement: (params: {
+    customerId: string;
+    month?: string;
+    includeDaily?: boolean;
+  }) => {
+    const search = new URLSearchParams();
+    search.set("customerId", params.customerId);
+    if (params.month) search.set("month", params.month);
+    if (params.includeDaily !== undefined) search.set("includeDaily", String(params.includeDaily));
+    return http<CustomerSubscriptionStatementResponse>(
+      `${API_BASE_URL}/api/sales/subscription-statement?${search.toString()}`
+    );
+  },
+
   overrideAudits: (dateFrom: string, dateTo?: string) =>
     http<SaleOverrideAuditResponse[]>(
       `${API_BASE_URL}/api/sales/override-audits?dateFrom=${dateFrom}&dateTo=${dateTo ?? dateFrom}`
@@ -1548,7 +1933,13 @@ export const SalesApi = {
 
   updateDelivery: (
     saleId: string,
-    payload: { delivered: boolean; deliveryNote?: string | null; collectedAmount?: number | null }
+    payload: {
+      delivered: boolean;
+      deliveryNote?: string | null;
+      collectedAmount?: number | null;
+      overrideWithdrawalLock?: boolean | null;
+      overrideReason?: string | null;
+    }
   ) =>
     http<DeliveryChecklistItemResponse>(`${API_BASE_URL}/api/sales/${saleId}/delivery`, {
       method: "POST",
@@ -1655,6 +2046,27 @@ export const DeliveryTaskApi = {
       }
     ),
 
+  triggerDayPlan: (date: string, autoAssign = true, optimize = true) =>
+    http<DeliveryDayPlanTriggerResponse>(
+      `${API_BASE_URL}/api/delivery-tasks/day-plan?date=${encodeURIComponent(date)}&autoAssign=${autoAssign}&optimize=${optimize}`,
+      {
+        method: "POST",
+      }
+    ),
+
+  optimize: (params: { date: string; shift?: Shift | null; routeName?: string | null }) => {
+    const search = new URLSearchParams();
+    search.set("date", params.date);
+    if (params.shift) search.set("shift", params.shift);
+    if (params.routeName) search.set("routeName", params.routeName);
+    return http<DeliveryRouteOptimizationResponse>(
+      `${API_BASE_URL}/api/delivery-tasks/optimize?${search.toString()}`,
+      {
+        method: "POST",
+      }
+    );
+  },
+
   previewSubscriptions: (date: string) =>
     http<SubscriptionGenerationPreviewResponse>(
       `${API_BASE_URL}/api/delivery-tasks/generate-subscriptions/preview?date=${encodeURIComponent(date)}`
@@ -1662,6 +2074,12 @@ export const DeliveryTaskApi = {
 
   updateStatus: (deliveryTaskId: string, payload: UpdateDeliveryTaskStatusPayload) =>
     http<DeliveryTaskResponse>(`${API_BASE_URL}/api/delivery-tasks/${encodeURIComponent(deliveryTaskId)}/status`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  bulkUpdateStatus: (payload: UpdateDeliveryTaskStatusBulkPayload) =>
+    http<UpdateDeliveryTaskStatusBulkResponse>(`${API_BASE_URL}/api/delivery-tasks/bulk-status`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),

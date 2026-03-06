@@ -70,6 +70,8 @@ type QcBatchStatusUpdatePendingPayload = {
     date: string;
     shift: Shift;
     qcStatus: QcStatus;
+    overrideRecommendedStatus?: boolean | null;
+    overrideReason?: string | null;
   };
 };
 
@@ -436,6 +438,8 @@ export async function queueQcBatchStatusUpdate(
     date: string;
     shift: Shift;
     qcStatus: QcStatus;
+    overrideRecommendedStatus?: boolean | null;
+    overrideReason?: string | null;
   },
   error?: string
 ): Promise<void> {

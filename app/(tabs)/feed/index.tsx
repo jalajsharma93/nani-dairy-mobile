@@ -25,6 +25,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
 import { useAuth } from "../../state/auth";
+import { DateInput } from "../../../components/date-input";
 import {
   flushPendingSyncOperations,
   getPendingSyncSummary,
@@ -942,20 +943,10 @@ export default function FeedScreen() {
               </Pressable>
             </View>
 
-            <TextInput
+            <DateInput
               value={date}
               onChangeText={setDate}
               placeholder={x("Date (YYYY-MM-DD)", "तारीख (YYYY-MM-DD)")}
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 12,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 10,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surface,
-              }}
             />
 
             <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -1123,20 +1114,10 @@ export default function FeedScreen() {
                   {editingFeedLogId ? x("Edit Feed Log", "चारा रिकॉर्ड बदलें") : x("Add Feed Log", "चारा रिकॉर्ड जोड़ें")}
                 </Text>
 
-              <TextInput
+              <DateInput
                 value={feedDate}
                 onChangeText={setFeedDate}
                 placeholder={x("Feed date (YYYY-MM-DD)", "चारा तारीख (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                style={{
-                  marginTop: 10,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
               />
 
               {!editingFeedLogId ? (
@@ -2226,20 +2207,10 @@ export default function FeedScreen() {
                       <Text style={{ marginTop: 12, color: DairyColors.textSecondary, fontWeight: "700" }}>
                         {x("Create SOP Task", "SOP टास्क बनाएं")}
                       </Text>
-                      <TextInput
+                      <DateInput
                         value={taskDate}
                         onChangeText={setTaskDate}
                         placeholder={x("Task date (YYYY-MM-DD)", "टास्क तारीख (YYYY-MM-DD)")}
-                        placeholderTextColor="#99A99A"
-                        style={{
-                          marginTop: 8,
-                          borderWidth: 1,
-                          borderColor: DairyColors.border,
-                          borderRadius: 10,
-                          padding: 10,
-                          color: DairyColors.textPrimary,
-                          backgroundColor: DairyColors.surfaceMuted,
-                        }}
                       />
                       <TextInput
                         value={taskTitle}

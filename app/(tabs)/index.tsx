@@ -37,6 +37,7 @@ type DashboardRoute =
   | "/treatments"
   | "/breeding"
   | "/sales"
+  | "/delivery-ops"
   | "/services"
   | "/feed"
   | "/tasks"
@@ -486,14 +487,14 @@ export default function DashboardScreen() {
     }
     if (isDelivery) {
       return [
-        { key: "sales", label: x("Delivery Checklist", "डिलीवरी चेकलिस्ट"), href: "/sales" },
+        { key: "delivery", label: x("Delivery Board", "डिलीवरी बोर्ड"), href: "/delivery-ops" },
         { key: "services", label: x("Services", "सर्विसेस"), href: "/services" },
       ];
     }
     if (isFeedManager) {
       return [
         { key: "feed", label: x("Feed", "फीड"), href: "/feed" },
-        { key: "tasks", label: x("Task Manager", "टास्क मैनेजर"), href: "/tasks" },
+        { key: "tasks", label: x("Tasks & Worklist", "टास्क और वर्कलिस्ट"), href: "/today-tasks" },
         { key: "stock", label: x("Stock", "स्टॉक"), href: "/stock" },
       ];
     }

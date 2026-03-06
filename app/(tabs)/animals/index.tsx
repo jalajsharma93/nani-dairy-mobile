@@ -6,6 +6,7 @@ import { AnimalApi, AnimalGrowthStage, AnimalResponse, AnimalStatus } from "../.
 import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
+import { DateInput } from "../../../components/date-input";
 
 const STATUS_OPTIONS: AnimalStatus[] = ["LACTATING", "DRY", "SICK", "SOLD"];
 const GROWTH_STAGE_OPTIONS: AnimalGrowthStage[] = ["CALF", "GROWER", "ADULT"];
@@ -587,18 +588,8 @@ export default function AnimalsScreen() {
                 <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
                   {x("Date of Birth (YYYY-MM-DD)", "जन्मतिथि (YYYY-MM-DD)")}
                 </Text>
-                <TextInput
-                  style={{
-                    marginTop: 6,
-                    borderWidth: 1,
-                    borderColor: DairyColors.border,
-                    borderRadius: 10,
-                    padding: 11,
-                    color: DairyColors.textPrimary,
-                    backgroundColor: DairyColors.surfaceMuted,
-                  }}
+                <DateInput
                   placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#99A99A"
                   value={dateOfBirth}
                   onChangeText={setDateOfBirth}
                 />
@@ -697,18 +688,8 @@ export default function AnimalsScreen() {
                     <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
                       {x("Last Weight Date", "आखिरी वजन तारीख")}
                     </Text>
-                    <TextInput
-                      style={{
-                        marginTop: 6,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 11,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
+                    <DateInput
                       placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#99A99A"
                       value={lastWeightDate}
                       onChangeText={setLastWeightDate}
                     />
@@ -717,18 +698,8 @@ export default function AnimalsScreen() {
                     <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
                       {x("Weaning Date", "दूध छुड़ाने की तारीख")}
                     </Text>
-                    <TextInput
-                      style={{
-                        marginTop: 6,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 11,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
+                    <DateInput
                       placeholder="YYYY-MM-DD"
-                      placeholderTextColor="#99A99A"
                       value={weaningDate}
                       onChangeText={setWeaningDate}
                     />

@@ -55,14 +55,12 @@ export default function ServicesScreen() {
   const role = user?.role;
   const isAdmin = role === "ADMIN";
   const canOpenClinical = role === "ADMIN" || role === "MANAGER" || role === "VET";
-  const canOpenWorklist = role !== "DELIVERY" && role !== "VET";
   const canOpenEmployees = role === "ADMIN" || role === "MANAGER";
   const canOpenCustomers = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
-  const canOpenDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY";
+  const canOpenDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY" || role === "WORKER";
   const canOpenSales = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
   const canOpenExpenses = role === "ADMIN";
   const canOpenStock = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
-  const canOpenTaskManager = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
 
   return (
     <ScrollView
@@ -155,15 +153,6 @@ export default function ServicesScreen() {
           />
         ) : null}
 
-        {canOpenWorklist ? (
-          <ServiceCard
-            title={t("services.worklistTitle")}
-            subtitle={t("services.worklistSubtitle")}
-            icon="list"
-            onPress={() => router.push("/worklist")}
-          />
-        ) : null}
-
         {canOpenEmployees ? (
           <ServiceCard
             title={t("services.employeesTitle")}
@@ -222,26 +211,14 @@ export default function ServicesScreen() {
         ) : null}
 
         <ServiceCard
-          title={x("Today Tasks", "आज के टास्क")}
+          title={x("Tasks & Worklist", "टास्क और वर्कलिस्ट")}
           subtitle={x(
-            "Worker-friendly checklist grouped by due time",
-            "वर्कर फ्रेंडली चेकलिस्ट, समय के हिसाब से ग्रुप की हुई"
+            "Single daily board: worklist alerts + team task checklist",
+            "एक ही दैनिक बोर्ड: वर्कलिस्ट अलर्ट + टीम टास्क चेकलिस्ट"
           )}
           icon="today"
           onPress={() => router.push("/today-tasks")}
         />
-
-        {canOpenTaskManager ? (
-          <ServiceCard
-            title={x("Task Manager", "टास्क मैनेजर")}
-            subtitle={x(
-              "Create and track feed, delivery, farm and other tasks",
-              "फीड, डिलीवरी, फार्म और अन्य टास्क बनाएं और ट्रैक करें"
-            )}
-            icon="checkbox"
-            onPress={() => router.push("/tasks")}
-          />
-        ) : null}
 
         <ServiceCard
           title={t("services.profileTitle")}

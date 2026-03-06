@@ -1,16 +1,21 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { DairyColors } from "../../constants/dairy-theme";
 import {
+  DeliveryTaskApi,
+  DeliveryTaskResponse,
+  DeliveryTaskStatus,
   GenericTaskResponse,
   GenericTaskStatus,
   TaskApi,
+  WorklistApi,
+  WorklistResponse,
 } from "../../services/api";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
 import { todayLocalISO } from "../../utils/date";
+import { DateInput } from "../../../components/date-input";
 import {
   flushPendingSyncOperations,
   getPendingSyncSummary,
@@ -49,17 +54,21 @@ function statusOptions(task: GenericTaskResponse): GenericTaskStatus[] {
 }
 
 export default function TodayTasksScreen() {
-  const router = useRouter();
   const { x } = useI18n();
-  const { hasAnyRole } = useAuth();
-  const canOpenTaskManager = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
+  const { user, hasAnyRole } = useAuth();
+  const canManageTasks = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
+  const canViewDeliveryTasks = hasAnyRole("ADMIN", "MANAGER", "WORKER", "DELIVERY");
+  const canManageDeliveryTaskAssignments = hasAnyRole("ADMIN", "MANAGER");
 
-  const [date] = useState(todayLocalISO());
+  const [date, setDate] = useState(todayLocalISO());
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [tasks, setTasks] = useState<GenericTaskResponse[]>([]);
+  const [worklist, setWorklist] = useState<WorklistResponse | null>(null);
+  const [deliveryTasks, setDeliveryTasks] = useState<DeliveryTaskResponse[]>([]);
+  const [deliverySavingTaskId, setDeliverySavingTaskId] = useState<string | null>(null);
   const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
     total: 0,
     deliveryTaskStatus: 0,
@@ -96,8 +105,18 @@ export default function TodayTasksScreen() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const rows = await TaskApi.list({ date });
+      if (canViewDeliveryTasks) {
+        // Keep delivery checklist fresh for the selected date before loading cards.
+        await DeliveryTaskApi.generateSubscriptions(date).catch(() => undefined);
+      }
+      const [rows, worklistRes, deliveryRows] = await Promise.all([
+        TaskApi.list({ date }),
+        WorklistApi.today(date, 7),
+        canViewDeliveryTasks ? DeliveryTaskApi.list({ date }) : Promise.resolve([] as DeliveryTaskResponse[]),
+      ]);
       setTasks(rows);
+      setWorklist(worklistRes);
+      setDeliveryTasks(deliveryRows);
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -107,7 +126,7 @@ export default function TodayTasksScreen() {
     } finally {
       setLoading(false);
     }
-  }, [date, x]);
+  }, [canViewDeliveryTasks, date, x]);
 
   const refreshPendingSync = useCallback(async () => {
     setPendingSync(await getPendingSyncSummary());
@@ -255,6 +274,57 @@ export default function TodayTasksScreen() {
     }
   };
 
+  const visibleDeliveryTasks = useMemo(() => {
+    if (!canViewDeliveryTasks) {
+      return [] as DeliveryTaskResponse[];
+    }
+    if (canManageDeliveryTaskAssignments) {
+      return deliveryTasks;
+    }
+    const me = (user?.username ?? "").toLowerCase();
+    return deliveryTasks.filter((task) => {
+      const assignee = (task.assignedToUsername ?? "").trim().toLowerCase();
+      return assignee === me || assignee.length === 0;
+    });
+  }, [canManageDeliveryTaskAssignments, canViewDeliveryTasks, deliveryTasks, user?.username]);
+
+  const deliverySummary = useMemo(() => {
+    const total = visibleDeliveryTasks.length;
+    const delivered = visibleDeliveryTasks.filter((task) => task.status === "DELIVERED").length;
+    const pending = visibleDeliveryTasks.filter((task) => task.status === "PENDING").length;
+    const skipped = visibleDeliveryTasks.filter((task) => task.status === "SKIPPED").length;
+    return { total, delivered, pending, skipped };
+  }, [visibleDeliveryTasks]);
+
+  const updateDeliveryStatus = async (task: DeliveryTaskResponse, status: DeliveryTaskStatus) => {
+    try {
+      setDeliverySavingTaskId(task.deliveryTaskId);
+      const currentAssignee = (task.assignedToUsername ?? "").trim();
+      if (!currentAssignee && user?.username) {
+        await DeliveryTaskApi.assign(task.deliveryTaskId, {
+          assignedToUsername: user.username,
+          notes: "Claimed from unified daily task board.",
+        });
+      }
+      await DeliveryTaskApi.updateStatus(task.deliveryTaskId, {
+        status,
+        deliveredQtyLiters:
+          status === "DELIVERED"
+            ? task.deliveredQtyLiters ?? task.plannedQtyLiters
+            : task.deliveredQtyLiters ?? null,
+      });
+      await load();
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Save failed", "सेव नहीं हुआ"),
+        e?.message ?? x("Could not update delivery status.", "डिलीवरी स्टेटस अपडेट नहीं हुआ।")
+      );
+    } finally {
+      setDeliverySavingTaskId(null);
+    }
+  };
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: DairyColors.background }}
@@ -300,6 +370,12 @@ export default function TodayTasksScreen() {
         {x(`Date: ${date}`, `तारीख: ${date}`)}
       </Text>
 
+      <DateInput
+        value={date}
+        onChangeText={setDate}
+        placeholder={x("Date (YYYY-MM-DD)", "तारीख (YYYY-MM-DD)")}
+      />
+
       <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.surfaceMuted, padding: 10 }}>
           <Text style={{ color: DairyColors.textSecondary }}>{x("Open Tasks", "खुले टास्क")}</Text>
@@ -316,6 +392,27 @@ export default function TodayTasksScreen() {
         <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.dangerSoft, padding: 10 }}>
           <Text style={{ color: DairyColors.textSecondary }}>{x("Overdue", "समय से बाकी")}</Text>
           <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.overdue}</Text>
+        </View>
+      </View>
+
+      <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+        <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}>
+          <Text style={{ color: DairyColors.textSecondary }}>{x("Worklist Overdue", "वर्कलिस्ट ओवरड्यू")}</Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
+            {worklist?.overdueCount ?? 0}
+          </Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}>
+          <Text style={{ color: DairyColors.textSecondary }}>{x("Due Soon", "जल्द देय")}</Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
+            {worklist?.dueSoonCount ?? 0}
+          </Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.accentSoft, padding: 10 }}>
+          <Text style={{ color: DairyColors.textSecondary }}>{x("High Priority", "उच्च प्राथमिकता")}</Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
+            {worklist?.highPriorityCount ?? 0}
+          </Text>
         </View>
       </View>
 
@@ -337,25 +434,62 @@ export default function TodayTasksScreen() {
               : x("Show Completed", "पूरा हुए दिखाएं")}
           </Text>
         </Pressable>
-
-        {canOpenTaskManager ? (
-          <Pressable
-            onPress={() => router.push("/tasks")}
+        {canManageTasks ? (
+          <View
             style={{
               borderWidth: 1,
               borderColor: DairyColors.border,
-              backgroundColor: DairyColors.surface,
+              backgroundColor: DairyColors.surfaceMuted,
               borderRadius: 999,
               paddingHorizontal: 12,
               paddingVertical: 8,
+              justifyContent: "center",
             }}
           >
-            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-              {x("Open Task Manager", "टास्क मैनेजर खोलें")}
+            <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+              {x("Manager view enabled", "मैनेजर व्यू चालू")}
             </Text>
-          </Pressable>
+          </View>
         ) : null}
       </View>
+
+      {worklist && worklist.items.length > 0 ? (
+        <View
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 14,
+            backgroundColor: DairyColors.surface,
+            padding: 12,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
+            {x("Auto Worklist Alerts", "ऑटो वर्कलिस्ट अलर्ट")}
+          </Text>
+          {worklist.items.slice(0, 8).map((row) => (
+            <View
+              key={`worklist-${row.taskId}`}
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                backgroundColor: DairyColors.surfaceMuted,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{row.title}</Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Due ${row.dueDate ?? "-"} | Priority ${row.priority} | ${row.dueStatus}`,
+                  `देय ${row.dueDate ?? "-"} | प्राथमिकता ${row.priority} | ${row.dueStatus}`
+                )}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       <View
         style={{
@@ -393,6 +527,90 @@ export default function TodayTasksScreen() {
           </Text>
         </Pressable>
       </View>
+
+      {canViewDeliveryTasks ? (
+        <View
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 14,
+            backgroundColor: DairyColors.surface,
+            padding: 12,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
+            {x("Delivery Tasks", "डिलीवरी टास्क")}
+          </Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `Stops ${deliverySummary.total} | Delivered ${deliverySummary.delivered} | Pending ${deliverySummary.pending} | Skipped ${deliverySummary.skipped}`,
+              `स्टॉप ${deliverySummary.total} | डिलीवर ${deliverySummary.delivered} | बाकी ${deliverySummary.pending} | स्किप ${deliverySummary.skipped}`
+            )}
+          </Text>
+          {visibleDeliveryTasks.length === 0 ? (
+            <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+              {x("No delivery tasks for selected date.", "चुनी हुई तारीख के लिए कोई डिलीवरी टास्क नहीं है।")}
+            </Text>
+          ) : (
+            visibleDeliveryTasks.slice(0, 30).map((task) => {
+              const mine = ((task.assignedToUsername ?? "").trim().toLowerCase() ===
+                (user?.username ?? "").trim().toLowerCase());
+              const unassigned = !(task.assignedToUsername ?? "").trim();
+              const canAct = canManageDeliveryTaskAssignments || mine || unassigned;
+              return (
+                <View
+                  key={`delivery-task-${task.deliveryTaskId}`}
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    backgroundColor: DairyColors.surfaceMuted,
+                    padding: 10,
+                  }}
+                >
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{task.customerName}</Text>
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `${task.taskShift ?? "AM"} | ${task.productType ?? "MILK"} | Planned ${task.plannedQtyLiters.toFixed(2)} L`,
+                      `${task.taskShift ?? "AM"} | ${task.productType ?? "MILK"} | योजना ${task.plannedQtyLiters.toFixed(2)} L`
+                    )}
+                  </Text>
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Assigned: ${task.assignedToUsername ?? "Unassigned"} | Status: ${task.status}`,
+                      `असाइन: ${task.assignedToUsername ?? "अनअसाइन्ड"} | स्थिति: ${task.status}`
+                    )}
+                  </Text>
+                  <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                    {(["PENDING", "DELIVERED", "SKIPPED"] as DeliveryTaskStatus[]).map((status) => (
+                      <Pressable
+                        key={`${task.deliveryTaskId}-${status}`}
+                        disabled={!canAct || deliverySavingTaskId === task.deliveryTaskId}
+                        onPress={() => void updateDeliveryStatus(task, status)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: task.status === status ? DairyColors.primary : DairyColors.border,
+                          backgroundColor: task.status === status ? DairyColors.primarySoft : DairyColors.surface,
+                          borderRadius: 999,
+                          paddingHorizontal: 10,
+                          paddingVertical: 7,
+                          opacity: !canAct ? 0.55 : 1,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                          {status}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
+      ) : null}
 
       {GROUP_ORDER.map((group) => {
         const rows = groupedTasks[group];

@@ -24,13 +24,13 @@ import {
   Shift,
 } from "../../services/api";
 import { DairyColors } from "../../constants/dairy-theme";
+import { DateInput } from "../../../components/date-input";
 import { shiftIsoDate, todayLocalISO } from "../../utils/date";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
 import {
   getPendingSyncSummary,
   PendingSyncSummary,
-  queueSaleDeliveryUpdate,
   queueSaleReconcileUpdate,
   queueSaleSave,
   shouldQueueForOffline,
@@ -81,7 +81,7 @@ function monthRange(monthIso: string): { from: string; to: string } | null {
 
 export default function SalesScreen() {
   const router = useRouter();
-  const { user, hasAnyRole } = useAuth();
+  const { hasAnyRole } = useAuth();
   const { x, label } = useI18n();
   const canManageSales = hasAnyRole("ADMIN", "MANAGER");
   const canDeliveryChecklist = hasAnyRole("ADMIN", "MANAGER", "WORKER", "DELIVERY");
@@ -98,8 +98,6 @@ export default function SalesScreen() {
   const [loading, setLoading] = useState(false);
   const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [deliverySavingSaleId, setDeliverySavingSaleId] = useState<string | null>(null);
-  const [deliveryCollectedBySaleId, setDeliveryCollectedBySaleId] = useState<Record<string, string>>({});
   const [reconcilingSaleId, setReconcilingSaleId] = useState<string | null>(null);
   const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
 
@@ -310,6 +308,11 @@ export default function SalesScreen() {
     }
     try {
       setDeliveryLoading(true);
+      if (canManageSales) {
+        await DeliveryTaskApi.generateSubscriptions(dispatchDate).catch((e) => {
+          console.error(e);
+        });
+      }
       const [rows, taskRows] = await Promise.all([
         SalesApi.deliveryList(dispatchDate),
         DeliveryTaskApi.list({ date: dispatchDate }),
@@ -325,7 +328,7 @@ export default function SalesScreen() {
     } finally {
       setDeliveryLoading(false);
     }
-  }, [canDeliveryChecklist, dispatchDate, x]);
+  }, [canDeliveryChecklist, canManageSales, dispatchDate, x]);
 
   useEffect(() => {
     loadSales();
@@ -721,63 +724,6 @@ export default function SalesScreen() {
     setNotes(sale.notes ?? "");
   };
 
-  const updateDeliveryStatus = async (
-    row: DeliveryChecklistItemResponse,
-    delivered: boolean,
-    options?: { deliveryNote?: string | null; collectedAmountText?: string }
-  ) => {
-    if (!canDeliveryChecklist) {
-      return;
-    }
-    const collectedRaw = options?.collectedAmountText?.trim() ?? "";
-    let parsedCollectedAmount: number | null = null;
-    if (collectedRaw) {
-      const value = Number(collectedRaw);
-      if (!Number.isFinite(value) || value <= 0) {
-        Alert.alert(
-          x("Invalid amount", "गलत राशि"),
-          x("Collected amount must be a positive number.", "कलेक्ट की गई राशि पॉजिटिव होनी चाहिए।")
-        );
-        return;
-      }
-      parsedCollectedAmount = value;
-    }
-
-    try {
-      setDeliverySavingSaleId(row.saleId);
-      const payload = {
-        delivered,
-        deliveryNote: options?.deliveryNote ?? null,
-        collectedAmount: parsedCollectedAmount,
-      };
-      await SalesApi.updateDelivery(row.saleId, payload);
-      setDeliveryCollectedBySaleId((prev) => ({ ...prev, [row.saleId]: "" }));
-      await loadDelivery();
-    } catch (e: any) {
-      console.error(e);
-      if (shouldQueueForOffline(e)) {
-        await queueSaleDeliveryUpdate(row.saleId, {
-          delivered,
-          deliveryNote: options?.deliveryNote ?? null,
-          collectedAmount: parsedCollectedAmount,
-        }, String(e?.message ?? ""));
-        await refreshPendingSync();
-        setDeliveryCollectedBySaleId((prev) => ({ ...prev, [row.saleId]: "" }));
-        Alert.alert(
-          x("Saved Offline", "ऑफलाइन सेव"),
-          x("Delivery status update is queued and will sync automatically.", "डिलीवरी स्टेटस अपडेट कतार में है और अपने-आप सिंक होगा।")
-        );
-        return;
-      }
-      Alert.alert(
-        x("Save failed", "सेव नहीं हुआ"),
-        e?.message ?? x("Could not update delivery status.", "डिलीवरी स्टेटस अपडेट नहीं हुआ।")
-      );
-    } finally {
-      setDeliverySavingSaleId(null);
-    }
-  };
-
   const updateReconciliation = async (saleId: string, reconciled: boolean) => {
     if (!canManageSales) {
       return;
@@ -1121,251 +1067,114 @@ export default function SalesScreen() {
     }
   };
 
-  const renderDeliveryChecklist = () => (
-    <View
-      style={{
-        marginTop: 14,
-        borderWidth: 1,
-        borderColor: DairyColors.border,
-        borderRadius: 14,
-        padding: 12,
-        backgroundColor: DairyColors.surface,
-      }}
-    >
-      <Text style={{ fontWeight: "800", color: DairyColors.textPrimary, fontSize: 16 }}>
-        {x("Delivery Checklist", "डिलीवरी चेकलिस्ट")}
-      </Text>
-      <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
-        {x("Tick delivered customers for selected date.", "चुनी हुई तारीख के लिए डिलीवर हुए ग्राहकों पर टिक करें।")}
-      </Text>
+  const renderDeliveryChecklist = () => {
+    const totalTasks = deliveryTasks.length;
+    const deliveredTasks = deliveryTasks.filter((row) => row.status === "DELIVERED").length;
+    const pendingTasks = deliveryTasks.filter((row) => row.status === "PENDING").length;
+    const plannedQty = deliveryTasks.reduce((sum, row) => sum + row.plannedQtyLiters, 0);
+    const deliveredQty = deliveryTasks.reduce(
+      (sum, row) => sum + (row.status === "DELIVERED" ? row.deliveredQtyLiters ?? row.plannedQtyLiters : 0),
+      0
+    );
+    const totalAmount = deliveryItems.reduce((sum, row) => sum + row.totalAmount, 0);
+    const pendingAmount = deliveryItems.reduce((sum, row) => sum + row.pendingAmount, 0);
+    const routeCount = new Set(
+      deliveryTasks.map((row) => row.routeName?.trim()).filter((row): row is string => Boolean(row))
+    ).size;
 
-      <TextInput
-        value={dispatchDate}
-        onChangeText={setDispatchDate}
-        placeholder={x("Dispatch Date (YYYY-MM-DD)", "डिस्पैच तारीख (YYYY-MM-DD)")}
-        placeholderTextColor="#99A99A"
-        style={{
-          marginTop: 8,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          borderRadius: 10,
-          padding: 10,
-          color: DairyColors.textPrimary,
-          backgroundColor: DairyColors.surfaceMuted,
-        }}
-      />
-
-      <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-        <Pressable
-          onPress={() => router.push("/delivery-ops")}
-          style={{
-            borderRadius: 10,
-            backgroundColor: DairyColors.primary,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-          }}
-        >
-          <Text style={{ color: "white", fontWeight: "800" }}>
-            {x("Open Delivery Ops", "डिलीवरी ऑप्स खोलें")}
-          </Text>
-        </Pressable>
-        <Pressable
-          disabled={deliveryLoading}
-          onPress={() => void loadDelivery()}
-          style={{
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: DairyColors.border,
-            backgroundColor: DairyColors.surface,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-          }}
-        >
-          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-            {deliveryLoading ? x("Refreshing...", "रिफ्रेश हो रहा है...") : x("Refresh", "रिफ्रेश")}
-          </Text>
-        </Pressable>
-      </View>
-
+    return (
       <View
         style={{
-          marginTop: 10,
-          borderRadius: 10,
+          marginTop: 14,
           borderWidth: 1,
           borderColor: DairyColors.border,
-          backgroundColor: DairyColors.surfaceMuted,
-          padding: 10,
+          borderRadius: 14,
+          padding: 12,
+          backgroundColor: DairyColors.surface,
         }}
       >
-        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-          {x("Delivery Tasks", "डिलीवरी टास्क")}
+        <Text style={{ fontWeight: "800", color: DairyColors.textPrimary, fontSize: 16 }}>
+          {x("Today Delivery Overview", "आज की डिलीवरी ओवरव्यू")}
         </Text>
-        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
           {x(
-            "Delivery actions have moved to Delivery Ops. This screen is read-only for delivery tasks.",
-            "डिलीवरी एक्शन अब Delivery Ops में हैं। यह स्क्रीन डिलीवरी टास्क के लिए सिर्फ देखने हेतु है।"
-          )}
-        </Text>
-        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-          {x(
-            `Current user: ${user?.username ?? "unknown"}`,
-            `वर्तमान यूज़र: ${user?.username ?? "unknown"}`
+            "Execution is in Delivery Ops. Sales shows settlement and pending amount snapshot.",
+            "कार्यान्वयन Delivery Ops में है। Sales स्क्रीन सिर्फ सेटलमेंट और बकाया स्नैपशॉट दिखाती है।"
           )}
         </Text>
 
-        {deliveryTasks.length === 0 ? (
-          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
-            {deliveryLoading
-              ? x("Loading tasks...", "टास्क लोड हो रहे हैं...")
-              : x("No delivery tasks for selected date.", "चुनी हुई तारीख के लिए कोई डिलीवरी टास्क नहीं है।")}
-          </Text>
-        ) : (
-          deliveryTasks.map((task) => (
-            <View
-              key={task.deliveryTaskId}
-              style={{
-                marginTop: 8,
-                borderWidth: 1,
-                borderColor: task.status === "DELIVERED" ? DairyColors.success : DairyColors.border,
-                borderRadius: 10,
-                padding: 10,
-                backgroundColor: task.status === "DELIVERED" ? DairyColors.successSoft : DairyColors.surface,
-              }}
-            >
-              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-                {task.customerName}
-                {task.routeName ? ` | ${task.routeName}` : ""}
-              </Text>
-              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                {x(`Shift: ${task.taskShift ?? "AM"}`, `शिफ्ट: ${task.taskShift ?? "AM"}`)}
-                {task.autoGenerated ? ` | ${x("Auto subscription", "ऑटो सब्सक्रिप्शन")}` : ""}
-              </Text>
-              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                {x(
-                  `Assigned: ${task.assignedToUsername ?? "Unassigned"}`,
-                  `असाइन: ${task.assignedToUsername ?? "अनअसाइन्ड"}`
-                )}
-                {task.assignedByUsername ? ` | ${task.assignedByUsername}` : ""}
-              </Text>
-              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                {x(
-                  `Planned ${task.plannedQtyLiters.toFixed(2)} L @ Rs ${task.unitPrice.toFixed(2)} | Delivered ${(task.deliveredQtyLiters ?? 0).toFixed(2)} L`,
-                  `योजना ${task.plannedQtyLiters.toFixed(2)} L @ रु ${task.unitPrice.toFixed(2)} | डिलीवर ${(task.deliveredQtyLiters ?? 0).toFixed(2)} L`
-                )}
-              </Text>
-              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                {x(`Status: ${task.status}`, `स्टेटस: ${task.status}`)}
-                {task.completedBy ? ` | ${task.completedBy}` : ""}
-              </Text>
-              {task.saleId ? (
-                <Text style={{ marginTop: 2, color: DairyColors.info }}>
-                  {x(`Recorded Sale: ${task.saleId}`, `रिकॉर्डेड सेल: ${task.saleId}`)}
-                </Text>
-              ) : null}
-              {task.notes ? (
-                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{task.notes}</Text>
-              ) : null}
+        <DateInput
+          value={dispatchDate}
+          onChangeText={setDispatchDate}
+          placeholder={x("Dispatch Date (YYYY-MM-DD)", "डिस्पैच तारीख (YYYY-MM-DD)")}
+        />
 
-            </View>
-          ))
-        )}
-      </View>
-
-      {deliveryItems.length === 0 ? (
-        <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
-          {deliveryLoading
-            ? x("Loading checklist...", "चेकलिस्ट लोड हो रही है...")
-            : x("No deliveries found for selected date.", "चुनी हुई तारीख के लिए कोई डिलीवरी नहीं मिली।")}
-        </Text>
-      ) : (
-        deliveryItems.map((row) => (
-          <View
-            key={row.saleId}
+        <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          <Pressable
+            onPress={() => router.push("/delivery-ops")}
             style={{
-              marginTop: 8,
-              borderWidth: 1,
-              borderColor: row.delivered ? DairyColors.success : DairyColors.border,
               borderRadius: 10,
-              padding: 10,
-              backgroundColor: row.delivered ? DairyColors.successSoft : DairyColors.surfaceMuted,
+              backgroundColor: DairyColors.primary,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+            }}
+          >
+            <Text style={{ color: "white", fontWeight: "800" }}>
+              {x("Open Delivery Ops", "डिलीवरी ऑप्स खोलें")}
+            </Text>
+          </Pressable>
+          <Pressable
+            disabled={deliveryLoading}
+            onPress={() => void loadDelivery()}
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              backgroundColor: DairyColors.surface,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}
           >
             <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-              {row.customerName}
+              {deliveryLoading ? x("Refreshing...", "रिफ्रेश हो रहा है...") : x("Refresh", "रिफ्रेश")}
             </Text>
-            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-              {productTypeLabel(row.productType)} | {row.quantity.toFixed(2)}
-              {row.routeName ? ` | ${row.routeName}` : ""}
-            </Text>
-            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-              {x(
-                `Total ${amount(row.totalAmount)} | Received ${amount(row.receivedAmount)} | Pending ${amount(row.pendingAmount)}`,
-                `कुल ${amount(row.totalAmount)} | मिला ${amount(row.receivedAmount)} | बाकी ${amount(row.pendingAmount)}`
-              )}
-            </Text>
-            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-              {row.delivered
-                ? x(
-                    `Delivered by ${row.deliveredBy ?? "-"}${row.deliveredAt ? ` at ${row.deliveredAt}` : ""}`,
-                    `${row.deliveredBy ?? "-"} द्वारा डिलीवर${row.deliveredAt ? ` (${row.deliveredAt})` : ""}`
-                  )
-                : x("Pending delivery", "डिलीवरी बाकी")}
-            </Text>
-            <TextInput
-              value={deliveryCollectedBySaleId[row.saleId] ?? ""}
-              onChangeText={(v) =>
-                setDeliveryCollectedBySaleId((prev) => ({
-                  ...prev,
-                  [row.saleId]: v,
-                }))
-              }
-              placeholder={x("Collected amount (optional)", "कलेक्ट राशि (वैकल्पिक)")}
-              placeholderTextColor="#99A99A"
-              keyboardType="decimal-pad"
-              style={{
-                marginTop: 8,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 10,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surface,
-              }}
-            />
-            <Pressable
-              disabled={deliverySavingSaleId === row.saleId}
-              onPress={() =>
-                updateDeliveryStatus(row, !row.delivered, {
-                  collectedAmountText: deliveryCollectedBySaleId[row.saleId] ?? "",
-                })
-              }
-              style={{
-                marginTop: 8,
-                alignSelf: "flex-start",
-                borderRadius: 10,
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                backgroundColor:
-                  deliverySavingSaleId === row.saleId
-                    ? DairyColors.textSecondary
-                    : row.delivered
-                      ? DairyColors.warning
-                      : DairyColors.success,
-              }}
-            >
-              <Text style={{ color: "white", fontWeight: "800" }}>
-                {deliverySavingSaleId === row.saleId
-                  ? x("Saving...", "सेव हो रहा है...")
-                  : row.delivered
-                    ? x("Mark Pending", "पेंडिंग करें")
-                    : x("Mark Delivered", "डिलीवर मार्क करें")}
-              </Text>
-            </Pressable>
+          </Pressable>
+        </View>
+
+        <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, backgroundColor: DairyColors.surfaceMuted, padding: 8 }}>
+            <Text style={{ color: DairyColors.textSecondary }}>{x("Stops", "स्टॉप")}</Text>
+            <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>{totalTasks}</Text>
           </View>
-        ))
-      )}
-    </View>
-  );
+          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, backgroundColor: DairyColors.successSoft, padding: 8 }}>
+            <Text style={{ color: DairyColors.textSecondary }}>{x("Delivered", "डिलीवर")}</Text>
+            <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>{deliveredTasks}</Text>
+          </View>
+          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8 }}>
+            <Text style={{ color: DairyColors.textSecondary }}>{x("Pending", "बाकी")}</Text>
+            <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>{pendingTasks}</Text>
+          </View>
+          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, backgroundColor: DairyColors.accentSoft, padding: 8 }}>
+            <Text style={{ color: DairyColors.textSecondary }}>{x("Routes", "रूट")}</Text>
+            <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800" }}>{routeCount}</Text>
+          </View>
+        </View>
+
+        <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+          {x(
+            `Planned ${plannedQty.toFixed(2)} L | Delivered ${deliveredQty.toFixed(2)} L`,
+            `योजना ${plannedQty.toFixed(2)} L | डिलीवर ${deliveredQty.toFixed(2)} L`
+          )}
+        </Text>
+        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+          {x(
+            `Total amount ${amount(totalAmount)} | Pending collection ${amount(pendingAmount)}`,
+            `कुल राशि ${amount(totalAmount)} | बाकी वसूली ${amount(pendingAmount)}`
+          )}
+        </Text>
+      </View>
+    );
+  };
 
   const renderOfflineSyncStatus = () => (
     <View
@@ -1505,20 +1314,10 @@ export default function SalesScreen() {
         <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
           {x("Dispatch Date", "डिस्पैच तारीख")}
         </Text>
-        <TextInput
+        <DateInput
           value={dispatchDate}
           onChangeText={setDispatchDate}
           placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
-          placeholderTextColor="#99A99A"
-          style={{
-            marginTop: 6,
-            borderWidth: 1,
-            borderColor: DairyColors.border,
-            borderRadius: 10,
-            padding: 10,
-            color: DairyColors.textPrimary,
-            backgroundColor: DairyColors.surfaceMuted,
-          }}
         />
 
         <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
@@ -1742,20 +1541,10 @@ export default function SalesScreen() {
 
         {productType === "MILK" ? (
           <>
-            <TextInput
+            <DateInput
               value={batchDate}
               onChangeText={setBatchDate}
               placeholder={x("Batch date (YYYY-MM-DD)", "बैच तारीख (YYYY-MM-DD)")}
-              placeholderTextColor="#99A99A"
-              style={{
-                marginTop: 8,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 10,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surfaceMuted,
-              }}
             />
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
               {(["AM", "PM"] as Shift[]).map((s) => (

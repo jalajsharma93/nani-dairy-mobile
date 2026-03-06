@@ -5,10 +5,12 @@ import { DairyColors } from "../../constants/dairy-theme";
 import {
   AnimalApi,
   AnimalResponse,
+  DeliveryTaskApi,
   Shift as ApiShift,
   MilkApi,
   MilkBatchResponse,
   MilkEntryApi,
+  StockManagerApi,
 } from "../../services/api";
 import { todayLocalISO } from "../../utils/date";
 import {
@@ -140,10 +142,22 @@ export default function MilkEntryScreen() {
       setBatch(batchRes);
 
       await MilkEntryApi.saveEntries(entriesPayload);
+      await DeliveryTaskApi.generateSubscriptions(date).catch((e) => {
+        console.error(e);
+      });
+      await StockManagerApi.syncDay({
+        date,
+        autoTransferMilkToCurd: false,
+      }).catch((e) => {
+        console.error(e);
+      });
       setLastSavedKey(currentBatchKey);
       Alert.alert(
         x("Saved", "सेव हो गया"),
-        x(`Saved ${shift} milk batch and entries for ${date}`, `${date} की ${shift} शिफ्ट दूध एंट्री सेव हो गई।`)
+        x(
+          `Saved ${shift} milk batch, updated delivery plan and synced stock for ${date}.`,
+          `${date} की ${shift} शिफ्ट दूध एंट्री सेव हुई, डिलीवरी प्लान अपडेट हुआ और स्टॉक सिंक हो गया।`
+        )
       );
     } catch (e: any) {
       console.error(e);

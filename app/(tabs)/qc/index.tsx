@@ -6,6 +6,7 @@ import {
   AnimalResponse,
   MilkApi,
   MilkBatchResponse,
+  MilkBatchQcEvaluationResponse,
   MilkEntryApi,
   QcStatus,
   Shift,
@@ -63,6 +64,13 @@ function progressPercent(done: number, total: number) {
   return Math.max(0, Math.min(1, done / total));
 }
 
+function qcSeverity(status?: QcStatus | null) {
+  if (status === "REJECT") return 2;
+  if (status === "HOLD") return 1;
+  if (status === "PASS") return 0;
+  return -1;
+}
+
 function parseOptionalNumber(value: string, labelName: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -78,12 +86,14 @@ function parseOptionalNumber(value: string, labelName: string): number | null {
 export default function QualityCheckScreen() {
   const { hasAnyRole } = useAuth();
   const { x, label } = useI18n();
+  const isAdmin = hasAnyRole("ADMIN");
   const canApproveBatch = hasAnyRole("ADMIN", "MANAGER");
 
   const [date] = useState<string>(todayLocalISO());
   const [shift, setShift] = useState<Shift>("AM");
 
   const [batch, setBatch] = useState<MilkBatchResponse | null>(null);
+  const [evaluation, setEvaluation] = useState<MilkBatchQcEvaluationResponse | null>(null);
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [selectedAnimalId, setSelectedAnimalId] = useState<string>("");
   const [showAnimalPicker, setShowAnimalPicker] = useState(false);
@@ -93,6 +103,8 @@ export default function QualityCheckScreen() {
   const [loading, setLoading] = useState(false);
   const [savingStep1, setSavingStep1] = useState(false);
   const [updating, setUpdating] = useState<QcStatus | "">("");
+  const [overrideRecommendedStatus, setOverrideRecommendedStatus] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
   const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
     total: 0,
     deliveryTaskStatus: 0,
@@ -129,13 +141,15 @@ export default function QualityCheckScreen() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [batchRes, animalsRes, entryRes] = await Promise.all([
+      const [batchRes, evalRes, animalsRes, entryRes] = await Promise.all([
         MilkApi.getBatch(date, shift),
+        MilkApi.getQcEvaluation(date, shift).catch(() => null),
         AnimalApi.list({ active: true, status: "LACTATING" }),
         MilkEntryApi.list(date, shift),
       ]);
 
       setBatch(batchRes);
+      setEvaluation(evalRes);
       setAnimals(animalsRes);
       if (animalsRes.length > 0 && !animalsRes.some((a) => a.animalId === selectedAnimalId)) {
         setSelectedAnimalId(animalsRes[0].animalId);
@@ -177,6 +191,11 @@ export default function QualityCheckScreen() {
   }, [date, shift]);
 
   useEffect(() => {
+    setOverrideRecommendedStatus(false);
+    setOverrideReason("");
+  }, [date, shift]);
+
+  useEffect(() => {
     void refreshPendingSync();
   }, [refreshPendingSync]);
 
@@ -213,6 +232,8 @@ export default function QualityCheckScreen() {
     if (statuses.includes("HOLD")) return "HOLD";
     return "PASS";
   }, [anyCowReviewed, animals, drafts]);
+
+  const recommendedByRules: QcStatus | null = evaluation?.recommendedQcStatus ?? recommendedOverall;
 
   const saveStep1 = async () => {
     if (batchLocked) {
@@ -387,14 +408,56 @@ export default function QualityCheckScreen() {
       return;
     }
 
+    const recommended = evaluation?.recommendedQcStatus ?? null;
+    const overrideNeeded = recommended != null && qcSeverity(status) < qcSeverity(recommended);
+    const trimmedOverrideReason = overrideReason.trim();
+    if (overrideRecommendedStatus) {
+      if (!isAdmin) {
+        Alert.alert(
+          x("Supervisor approval required", "सुपरवाइज़र मंजूरी जरूरी"),
+          x("Only ADMIN can approve QC override.", "QC ओवरराइड सिर्फ ADMIN मंजूर कर सकता है।")
+        );
+        return;
+      }
+      if (!trimmedOverrideReason) {
+        Alert.alert(
+          x("Override reason required", "ओवरराइड कारण जरूरी"),
+          x("Add override reason before forcing QC status.", "QC स्टेटस force करने से पहले कारण लिखें।")
+        );
+        return;
+      }
+    }
+
     try {
       setUpdating(status);
-      const res = await MilkApi.updateQc({ date, shift, qcStatus: status });
+      const payload = {
+        date,
+        shift,
+        qcStatus: status,
+        overrideRecommendedStatus: overrideRecommendedStatus ? true : undefined,
+        overrideReason: overrideRecommendedStatus ? trimmedOverrideReason : undefined,
+      };
+      const res = await MilkApi.updateQc(payload);
       setBatch(res);
-      Alert.alert(
-        x("Updated", "अपडेट हुआ"),
-        x(`Overall QC set to ${status}`, `ओवरऑल QC ${status} किया गया`)
-      );
+      const nextEval = await MilkApi.getQcEvaluation(date, shift).catch(() => null);
+      setEvaluation(nextEval);
+
+      if (res.qcStatus !== status && overrideNeeded && !overrideRecommendedStatus) {
+        Alert.alert(
+          x("Rule applied", "रूल लागू हुआ"),
+          x(
+            `Requested ${status}, but rule engine set ${res.qcStatus}. Use ADMIN override with reason to force.`,
+            `आपने ${status} चुना, लेकिन रूल इंजन ने ${res.qcStatus} सेट किया। force करने के लिए ADMIN ओवरराइड कारण के साथ उपयोग करें।`
+          )
+        );
+      } else {
+        Alert.alert(
+          x("Updated", "अपडेट हुआ"),
+          x(`Overall QC set to ${res.qcStatus}`, `ओवरऑल QC ${res.qcStatus} किया गया`)
+        );
+      }
+      setOverrideRecommendedStatus(false);
+      setOverrideReason("");
     } catch (e: any) {
       console.error(e);
       const message = String(e?.message ?? x("Could not update overall QC status", "ओवरऑल QC अपडेट नहीं हो पाया"));
@@ -405,6 +468,20 @@ export default function QualityCheckScreen() {
         );
         return;
       }
+      if (message.toLowerCase().includes("only admin can approve qc override")) {
+        Alert.alert(
+          x("Supervisor approval required", "सुपरवाइज़र मंजूरी जरूरी"),
+          x("Only ADMIN can approve QC override.", "QC ओवरराइड सिर्फ ADMIN मंजूर कर सकता है।")
+        );
+        return;
+      }
+      if (message.toLowerCase().includes("overridereason is required")) {
+        Alert.alert(
+          x("Override reason required", "ओवरराइड कारण जरूरी"),
+          x("Add override reason before forcing QC status.", "QC स्टेटस force करने से पहले कारण लिखें।")
+        );
+        return;
+      }
       if (message.toLowerCase().includes("locked after qc pass")) {
         Alert.alert(
           x("Locked", "लॉक है"),
@@ -412,7 +489,16 @@ export default function QualityCheckScreen() {
         );
         await loadData();
       } else if (shouldQueueForOffline(e)) {
-        await queueQcBatchStatusUpdate({ date, shift, qcStatus: status }, message);
+        await queueQcBatchStatusUpdate(
+          {
+            date,
+            shift,
+            qcStatus: status,
+            overrideRecommendedStatus: overrideRecommendedStatus ? true : undefined,
+            overrideReason: overrideRecommendedStatus ? trimmedOverrideReason : undefined,
+          },
+          message
+        );
         await refreshPendingSync();
         setBatch((prev) =>
           prev
@@ -829,11 +915,94 @@ export default function QualityCheckScreen() {
         <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
           {anyCowReviewed
             ? x(
-                `Suggested overall: ${recommendedOverall}. Reviewed ${reviewedCount}/${animals.length}. ${step1Saved ? "Step 1 saved." : "Save Step 1 first."}`,
-                `सुझाव: ${recommendedOverall === "PASS" ? "पास" : recommendedOverall === "HOLD" ? "होल्ड" : "रिजेक्ट"}। जांच ${reviewedCount}/${animals.length}। ${step1Saved ? "स्टेप 1 सेव है।" : "पहले स्टेप 1 सेव करें।"}`
+                `Suggested overall: ${recommendedByRules ?? "PENDING"}. Reviewed ${reviewedCount}/${animals.length}. ${step1Saved ? "Step 1 saved." : "Save Step 1 first."}`,
+                `सुझाव: ${
+                  recommendedByRules === "PASS"
+                    ? "पास"
+                    : recommendedByRules === "HOLD"
+                      ? "होल्ड"
+                      : recommendedByRules === "REJECT"
+                        ? "रिजेक्ट"
+                        : "पेंडिंग"
+                }। जांच ${reviewedCount}/${animals.length}। ${step1Saved ? "स्टेप 1 सेव है।" : "पहले स्टेप 1 सेव करें।"}`
               )
             : x("Complete Step 1 for at least one cow first.", "पहले कम से कम एक गाय का स्टेप 1 पूरा करें।")}
         </Text>
+
+        {evaluation ? (
+          <View
+            style={{
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              borderRadius: 10,
+              backgroundColor: DairyColors.surfaceMuted,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.textSecondary }}>
+              {x(
+                `Rule review: reviewed ${evaluation.reviewedEntries}, pass ${evaluation.passEntries}, hold ${evaluation.holdEntries}, reject ${evaluation.rejectEntries}`,
+                `रूल समीक्षा: जांच ${evaluation.reviewedEntries}, पास ${evaluation.passEntries}, होल्ड ${evaluation.holdEntries}, रिजेक्ट ${evaluation.rejectEntries}`
+              )}
+            </Text>
+            <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+              {x(
+                `Triggers: ${evaluation.triggerCodes.length > 0 ? evaluation.triggerCodes.join(", ") : "None"}`,
+                `ट्रिगर: ${evaluation.triggerCodes.length > 0 ? evaluation.triggerCodes.join(", ") : "कोई नहीं"}`
+              )}
+            </Text>
+          </View>
+        ) : null}
+
+        {isAdmin ? (
+          <View
+            style={{
+              marginTop: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              borderRadius: 10,
+              backgroundColor: DairyColors.surfaceMuted,
+              padding: 10,
+            }}
+          >
+            <Pressable
+              onPress={() => setOverrideRecommendedStatus((prev) => !prev)}
+              style={{
+                borderWidth: 1,
+                borderColor: overrideRecommendedStatus ? DairyColors.warning : DairyColors.border,
+                borderRadius: 999,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                alignSelf: "flex-start",
+                backgroundColor: overrideRecommendedStatus ? DairyColors.warningSoft : DairyColors.surface,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {overrideRecommendedStatus
+                  ? x("Override Enabled", "ओवरराइड चालू")
+                  : x("Enable Override", "ओवरराइड चालू करें")}
+              </Text>
+            </Pressable>
+            <TextInput
+              value={overrideReason}
+              onChangeText={setOverrideReason}
+              editable={overrideRecommendedStatus}
+              placeholder={x("Override reason (required when forcing status)", "ओवरराइड कारण (force के लिए जरूरी)")}
+              placeholderTextColor="#99A99A"
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: overrideRecommendedStatus ? DairyColors.warning : DairyColors.border,
+                borderRadius: 10,
+                padding: 9,
+                color: DairyColors.textPrimary,
+                backgroundColor: DairyColors.surface,
+                opacity: overrideRecommendedStatus ? 1 : 0.7,
+              }}
+            />
+          </View>
+        ) : null}
 
         {canApproveBatch ? (
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>

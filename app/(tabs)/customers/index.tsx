@@ -16,6 +16,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
 import { useI18n } from "../../state/i18n";
 import { todayLocalISO } from "../../utils/date";
+import { DateInput } from "../../../components/date-input";
 
 const CUSTOMER_TYPES: CustomerType[] = ["COOPERATIVE", "RETAIL", "INDIVIDUAL"];
 const SUBSCRIPTION_FREQUENCIES: SubscriptionFrequency[] = ["DAILY", "WEEKLY"];
@@ -828,36 +829,20 @@ export default function CustomersScreen() {
                   </View>
 
                   <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
-                    <TextInput
+                    <View style={{ flex: 1 }}>
+                      <DateInput
                       value={lineStartDate}
                       onChangeText={setLineStartDate}
                       placeholder={x("Start date (YYYY-MM-DD)", "शुरुआत तारीख (YYYY-MM-DD)")}
-                      placeholderTextColor="#99A99A"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 10,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
-                    />
-                    <TextInput
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <DateInput
                       value={lineEndDate}
                       onChangeText={setLineEndDate}
                       placeholder={x("End date (YYYY-MM-DD)", "समाप्ति तारीख (YYYY-MM-DD)")}
-                      placeholderTextColor="#99A99A"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 10,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
-                    />
+                      />
+                    </View>
                   </View>
 
                   <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -1179,20 +1164,10 @@ export default function CustomersScreen() {
                         backgroundColor: DairyColors.surfaceMuted,
                       }}
                     />
-                    <TextInput
+                    <DateInput
                       value={subscriptionPausedUntil}
                       onChangeText={setSubscriptionPausedUntil}
                       placeholder={x("Pause until (YYYY-MM-DD)", "पॉज़-अनटिल (YYYY-MM-DD)")}
-                      placeholderTextColor="#99A99A"
-                      style={{
-                        marginTop: 8,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 10,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
                     />
                     <TextInput
                       value={subscriptionSkipDatesCsv}

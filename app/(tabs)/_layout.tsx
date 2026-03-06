@@ -47,7 +47,7 @@ export default function TabLayout() {
   const isAdmin = role === "ADMIN";
   const canClinical = role === "ADMIN" || role === "MANAGER" || role === "VET";
   const canSalesChecklist = isOpsRole || isDelivery;
-  const canDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY";
+  const canDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY" || role === "WORKER";
   const canCustomerAccess = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
   const canEmployeesAccess = role === "ADMIN" || role === "MANAGER";
   const canStockAccess = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";

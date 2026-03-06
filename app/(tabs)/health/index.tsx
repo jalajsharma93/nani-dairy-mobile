@@ -20,6 +20,7 @@ import { DairyColors } from "../../constants/dairy-theme";
 import { useAuth } from "../../state/auth";
 import { shiftIsoDate, todayLocalISO } from "../../utils/date";
 import { useI18n } from "../../state/i18n";
+import { DateInput } from "../../../components/date-input";
 
 type HealthTab = "VACCINATION" | "DEWORMING";
 type DueFilter = "ALL" | "DUE_TODAY" | "DUE_SOON" | "OVERDUE";
@@ -1308,22 +1309,14 @@ export default function HealthScreen() {
               }}
             />
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                value={vDoseDate}
-                onChangeText={onChangeVDoseDate}
-                placeholder={x("Dose Date (YYYY-MM-DD)", "डोज तारीख (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                editable={canManageHealth}
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
-              />
+              <View style={{ flex: 1 }}>
+                <DateInput
+                  value={vDoseDate}
+                  onChangeText={onChangeVDoseDate}
+                  placeholder={x("Dose Date (YYYY-MM-DD)", "डोज तारीख (YYYY-MM-DD)")}
+                  disabled={!canManageHealth}
+                />
+              </View>
               <TextInput
                 value={vDoseNumber}
                 onChangeText={setVDoseNumber}
@@ -1344,25 +1337,17 @@ export default function HealthScreen() {
             </View>
 
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                value={vNextDueDate}
-                onChangeText={(value) => {
-                  setVNextDueDate(value);
-                  setNextDueAuto(false);
-                }}
-                placeholder={x("Next Due (YYYY-MM-DD)", "अगली तारीख (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                editable={canManageHealth}
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
-              />
+              <View style={{ flex: 1 }}>
+                <DateInput
+                  value={vNextDueDate}
+                  onChangeText={(value) => {
+                    setVNextDueDate(value);
+                    setNextDueAuto(false);
+                  }}
+                  placeholder={x("Next Due (YYYY-MM-DD)", "अगली तारीख (YYYY-MM-DD)")}
+                  disabled={!canManageHealth}
+                />
+              </View>
               <Pressable
                 disabled={!canManageHealth}
                 onPress={() => applyAutoNextDue(selectedVaccineKey, vDoseDate)}
@@ -1386,38 +1371,22 @@ export default function HealthScreen() {
             </Text>
 
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                value={vBoosterDueDate}
-                onChangeText={setVBoosterDueDate}
-                placeholder={x("Booster (YYYY-MM-DD)", "बूस्टर (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                editable={canManageHealth}
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
-              />
-              <TextInput
-                value={vaccineExpiryDate}
-                onChangeText={setVaccineExpiryDate}
-                placeholder={x("Expiry (YYYY-MM-DD)", "एक्सपायरी (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                editable={canManageHealth}
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
-              />
+              <View style={{ flex: 1 }}>
+                <DateInput
+                  value={vBoosterDueDate}
+                  onChangeText={setVBoosterDueDate}
+                  placeholder={x("Booster (YYYY-MM-DD)", "बूस्टर (YYYY-MM-DD)")}
+                  disabled={!canManageHealth}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <DateInput
+                  value={vaccineExpiryDate}
+                  onChangeText={setVaccineExpiryDate}
+                  placeholder={x("Expiry (YYYY-MM-DD)", "एक्सपायरी (YYYY-MM-DD)")}
+                  disabled={!canManageHealth}
+                />
+              </View>
             </View>
 
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
@@ -1534,38 +1503,22 @@ export default function HealthScreen() {
             />
 
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                value={dDoseDate}
-                onChangeText={setDDoseDate}
-                placeholder={x("Dose Date (YYYY-MM-DD)", "डोज तारीख (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                editable={canManageHealth}
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
-              />
-              <TextInput
-                value={dNextDueDate}
-                onChangeText={setDNextDueDate}
-                placeholder={x("Next Due (YYYY-MM-DD)", "अगली तारीख (YYYY-MM-DD)")}
-                placeholderTextColor="#99A99A"
-                editable={canManageHealth}
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 10,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surfaceMuted,
-                }}
-              />
+              <View style={{ flex: 1 }}>
+                <DateInput
+                  value={dDoseDate}
+                  onChangeText={setDDoseDate}
+                  placeholder={x("Dose Date (YYYY-MM-DD)", "डोज तारीख (YYYY-MM-DD)")}
+                  disabled={!canManageHealth}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <DateInput
+                  value={dNextDueDate}
+                  onChangeText={setDNextDueDate}
+                  placeholder={x("Next Due (YYYY-MM-DD)", "अगली तारीख (YYYY-MM-DD)")}
+                  disabled={!canManageHealth}
+                />
+              </View>
             </View>
 
             <TextInput
