@@ -8,6 +8,8 @@ import {
   DeliveryTaskApi,
   DeliveryTaskResponse,
   CustomerRecordResponse,
+  CustomerSubscriptionInvoiceResponse,
+  CustomerSubscriptionInvoiceSummaryResponse,
   DeliveryChecklistItemResponse,
   CustomerLedgerRowResponse,
   CustomerType,
@@ -137,6 +139,14 @@ export default function SalesScreen() {
   const [statementBulkPreviewResult, setStatementBulkPreviewResult] = useState<MonthCloseSettlementBulkResponse | null>(
     null
   );
+  const [subscriptionInvoiceCustomerId, setSubscriptionInvoiceCustomerId] = useState<string>("");
+  const [subscriptionInvoiceIncludeDaily, setSubscriptionInvoiceIncludeDaily] = useState(false);
+  const [subscriptionInvoiceLoading, setSubscriptionInvoiceLoading] = useState(false);
+  const [subscriptionInvoice, setSubscriptionInvoice] = useState<CustomerSubscriptionInvoiceResponse | null>(null);
+  const [subscriptionInvoiceSummaries, setSubscriptionInvoiceSummaries] = useState<
+    CustomerSubscriptionInvoiceSummaryResponse[]
+  >([]);
+  const [subscriptionInvoiceSummariesLoading, setSubscriptionInvoiceSummariesLoading] = useState(false);
   const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
     total: 0,
     deliveryTaskStatus: 0,
@@ -160,6 +170,10 @@ export default function SalesScreen() {
   const productTypeLabel = (type: ProductType) => label("productType", type);
   const statementRange = useMemo(() => monthRange(statementMonth), [statementMonth]);
   const statementKey = useCallback((type: CustomerType, name: string) => `${type}::${name}`, []);
+  const subscriptionCustomers = useMemo(
+    () => customerRecords.filter((row) => row.isActive && row.subscriptionActive),
+    [customerRecords]
+  );
   const statementBulkPreviewSummary = useMemo(() => {
     if (!statementBulkPreviewResult) {
       return null;
@@ -224,23 +238,30 @@ export default function SalesScreen() {
     if (!canManageSales) {
       setStatementRows([]);
       setStatementReconciliationRows([]);
+      setSubscriptionInvoiceSummaries([]);
+      setSubscriptionInvoice(null);
       setStatementBulkPreviewResult(null);
       return;
     }
     if (!statementRange) {
       setStatementRows([]);
       setStatementReconciliationRows([]);
+      setSubscriptionInvoiceSummaries([]);
+      setSubscriptionInvoice(null);
       setStatementBulkPreviewResult(null);
       return;
     }
     try {
       setStatementLoading(true);
-      const [ledger, reconciliation] = await Promise.all([
+      setSubscriptionInvoiceSummariesLoading(true);
+      const [ledger, reconciliation, invoiceSummaries] = await Promise.all([
         SalesApi.ledger(statementRange.from, statementRange.to),
         SalesApi.reconciliation(statementRange.from, statementRange.to),
+        SalesApi.subscriptionInvoices({ month: statementMonth.trim() }),
       ]);
       setStatementRows(ledger);
       setStatementReconciliationRows(reconciliation);
+      setSubscriptionInvoiceSummaries(invoiceSummaries);
       setStatementBulkPreviewResult(null);
       setStatementPayoutByCustomer((prev) => {
         const next = { ...prev };
@@ -260,8 +281,48 @@ export default function SalesScreen() {
       );
     } finally {
       setStatementLoading(false);
+      setSubscriptionInvoiceSummariesLoading(false);
     }
-  }, [canManageSales, statementRange, statementKey, x]);
+  }, [canManageSales, statementMonth, statementRange, statementKey, x]);
+
+  const loadSubscriptionInvoice = useCallback(async () => {
+    if (!canManageSales) {
+      setSubscriptionInvoice(null);
+      return;
+    }
+    const customerIdToLoad = subscriptionInvoiceCustomerId.trim();
+    if (!customerIdToLoad) {
+      Alert.alert(
+        x("Select customer", "ग्राहक चुनें"),
+        x("Select a subscription customer first.", "पहले एक सब्सक्रिप्शन ग्राहक चुनें।")
+      );
+      return;
+    }
+    if (!ISO_MONTH_REGEX.test(statementMonth.trim())) {
+      Alert.alert(
+        x("Invalid month", "गलत महीना"),
+        x("Use month format YYYY-MM.", "महीना YYYY-MM फॉर्मेट में डालें।")
+      );
+      return;
+    }
+    try {
+      setSubscriptionInvoiceLoading(true);
+      const invoice = await SalesApi.subscriptionInvoice({
+        customerId: customerIdToLoad,
+        month: statementMonth.trim(),
+        includeDaily: subscriptionInvoiceIncludeDaily,
+      });
+      setSubscriptionInvoice(invoice);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Load failed", "लोड नहीं हुआ"),
+        e?.message ?? x("Could not load subscription invoice.", "सब्सक्रिप्शन इनवॉइस लोड नहीं हुआ।")
+      );
+    } finally {
+      setSubscriptionInvoiceLoading(false);
+    }
+  }, [canManageSales, statementMonth, subscriptionInvoiceCustomerId, subscriptionInvoiceIncludeDaily, x]);
 
   const loadSales = useCallback(async () => {
     if (!canManageSales) {
@@ -346,12 +407,26 @@ export default function SalesScreen() {
     void loadMonthStatement();
   }, [loadMonthStatement]);
 
+  useEffect(() => {
+    if (subscriptionCustomers.length === 0) {
+      setSubscriptionInvoiceCustomerId("");
+      return;
+    }
+    if (subscriptionInvoiceCustomerId && subscriptionCustomers.some((row) => row.customerId === subscriptionInvoiceCustomerId)) {
+      return;
+    }
+    setSubscriptionInvoiceCustomerId(subscriptionCustomers[0].customerId);
+  }, [subscriptionCustomers, subscriptionInvoiceCustomerId]);
+
   const refreshAll = useCallback(() => {
     void loadSales();
     void loadDelivery();
     void loadCustomers();
     void loadMonthStatement();
-  }, [loadCustomers, loadDelivery, loadMonthStatement, loadSales]);
+    if (subscriptionInvoiceCustomerId.trim()) {
+      void loadSubscriptionInvoice();
+    }
+  }, [loadCustomers, loadDelivery, loadMonthStatement, loadSales, loadSubscriptionInvoice, subscriptionInvoiceCustomerId]);
 
   const refreshPendingSync = useCallback(async () => {
     setPendingSync(await getPendingSyncSummary());
@@ -1950,6 +2025,195 @@ export default function SalesScreen() {
             >
               <Text style={{ color: "white", fontWeight: "800" }}>{x("Load", "लोड")}</Text>
             </Pressable>
+          </View>
+
+          <View
+            style={{
+              marginTop: 8,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              backgroundColor: DairyColors.surfaceMuted,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+              {x("Subscription Invoice Generator", "सब्सक्रिप्शन इनवॉइस जेनरेटर")}
+            </Text>
+            <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+              {x(
+                "Generate invoice-ready month statement with proration and holiday credits.",
+                "प्रोरेशन और हॉलिडे क्रेडिट के साथ इनवॉइस-रेडी मासिक स्टेटमेंट बनाएं।"
+              )}
+            </Text>
+
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8 }}>
+              {subscriptionCustomers.length === 0 ? (
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x("No active subscription customers.", "कोई सक्रिय सब्सक्रिप्शन ग्राहक नहीं।")}
+                </Text>
+              ) : (
+                subscriptionCustomers.slice(0, 24).map((row) => {
+                  const selected = subscriptionInvoiceCustomerId === row.customerId;
+                  return (
+                    <Pressable
+                      key={`invoice-customer-${row.customerId}`}
+                      onPress={() => setSubscriptionInvoiceCustomerId(row.customerId)}
+                      style={{
+                        marginRight: 8,
+                        marginBottom: 8,
+                        paddingHorizontal: 10,
+                        paddingVertical: 7,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: selected ? DairyColors.primary : DairyColors.border,
+                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                      }}
+                    >
+                      <Text style={{ color: selected ? DairyColors.primary : DairyColors.textPrimary, fontWeight: "700" }}>
+                        {row.customerName}
+                      </Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+              <Pressable
+                onPress={() => setSubscriptionInvoiceIncludeDaily((prev) => !prev)}
+                style={{
+                  flex: 1,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: subscriptionInvoiceIncludeDaily ? DairyColors.info : DairyColors.border,
+                  backgroundColor: subscriptionInvoiceIncludeDaily ? DairyColors.infoSoft : DairyColors.surface,
+                  paddingVertical: 10,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                  {subscriptionInvoiceIncludeDaily
+                    ? x("Daily rows: ON", "डेली पंक्तियां: ON")
+                    : x("Daily rows: OFF", "डेली पंक्तियां: OFF")}
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={subscriptionInvoiceLoading || !subscriptionInvoiceCustomerId}
+                onPress={() => void loadSubscriptionInvoice()}
+                style={{
+                  flex: 1,
+                  borderRadius: 10,
+                  paddingVertical: 10,
+                  alignItems: "center",
+                  backgroundColor:
+                    subscriptionInvoiceLoading || !subscriptionInvoiceCustomerId
+                      ? DairyColors.textSecondary
+                      : DairyColors.primary,
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: "800" }}>
+                  {subscriptionInvoiceLoading ? x("Loading...", "लोड...") : x("Generate Invoice", "इनवॉइस बनाएं")}
+                </Text>
+              </Pressable>
+            </View>
+
+            {subscriptionInvoice ? (
+              <View
+                style={{
+                  marginTop: 8,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  backgroundColor: DairyColors.surface,
+                  padding: 10,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                  {subscriptionInvoice.invoiceNumber}
+                </Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Issue ${subscriptionInvoice.issueDate} | Due ${subscriptionInvoice.dueDate} | Proration ${subscriptionInvoice.prorationFactor}`,
+                    `जारी ${subscriptionInvoice.issueDate} | देय ${subscriptionInvoice.dueDate} | प्रोरेशन ${subscriptionInvoice.prorationFactor}`
+                  )}
+                </Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Opening ${amount(subscriptionInvoice.openingPendingAmount)} | Closing ${amount(subscriptionInvoice.closingPendingAmount)} | Running ${amount(subscriptionInvoice.currentRunningBalance)}`,
+                    `ओपनिंग ${amount(subscriptionInvoice.openingPendingAmount)} | क्लोजिंग ${amount(subscriptionInvoice.closingPendingAmount)} | रनिंग ${amount(subscriptionInvoice.currentRunningBalance)}`
+                  )}
+                </Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Planned ${amount(subscriptionInvoice.plannedAmount)} | Billed ${amount(subscriptionInvoice.billedAmount)} | Received ${amount(subscriptionInvoice.receivedAmount)} | Pending ${amount(subscriptionInvoice.pendingAmount)}`,
+                    `प्लान ${amount(subscriptionInvoice.plannedAmount)} | बिल ${amount(subscriptionInvoice.billedAmount)} | मिला ${amount(subscriptionInvoice.receivedAmount)} | बाकी ${amount(subscriptionInvoice.pendingAmount)}`
+                  )}
+                </Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Holiday credit ${amount(subscriptionInvoice.holidayCreditAmount)} | Add-on ${amount(subscriptionInvoice.addOnBilledAmount)} | Under-delivery credit ${amount(subscriptionInvoice.underDeliveryCreditAmount)}`,
+                    `हॉलिडे क्रेडिट ${amount(subscriptionInvoice.holidayCreditAmount)} | ऐड-ऑन ${amount(subscriptionInvoice.addOnBilledAmount)} | कम डिलीवरी क्रेडिट ${amount(subscriptionInvoice.underDeliveryCreditAmount)}`
+                  )}
+                </Text>
+
+                {subscriptionInvoice.invoiceLineItems.length > 0 ? (
+                  <View style={{ marginTop: 8 }}>
+                    {subscriptionInvoice.invoiceLineItems.map((item, index) => (
+                      <Text key={`invoice-item-${item.code}-${index}`} style={{ marginTop: index === 0 ? 0 : 3, color: DairyColors.textSecondary }}>
+                        {`${index + 1}. ${item.label}: ${amount(item.amount)}`}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+
+                {subscriptionInvoiceIncludeDaily && subscriptionInvoice.dailyRows.length > 0 ? (
+                  <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Daily rows loaded: ${subscriptionInvoice.dailyRows.length}`,
+                      `डेली पंक्तियां लोड: ${subscriptionInvoice.dailyRows.length}`
+                    )}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                {x("Invoice summary (all subscription customers)", "इनवॉइस सारांश (सभी सब्सक्रिप्शन ग्राहक)")}
+              </Text>
+              {subscriptionInvoiceSummariesLoading ? (
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>{x("Loading...", "लोड...")}</Text>
+              ) : subscriptionInvoiceSummaries.length === 0 ? (
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x("No subscription invoice rows for selected month.", "चुने हुए महीने के लिए कोई इनवॉइस रिकॉर्ड नहीं है।")}
+                </Text>
+              ) : (
+                subscriptionInvoiceSummaries.slice(0, 12).map((row) => (
+                  <View
+                    key={`invoice-summary-${row.customerId}`}
+                    style={{
+                      marginTop: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      backgroundColor: DairyColors.surface,
+                      padding: 8,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                      {`${row.customerName} (${row.invoiceNumber})`}
+                    </Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                      {x(
+                        `Billed ${amount(row.billedAmount)} | Received ${amount(row.receivedAmount)} | Pending ${amount(row.pendingAmount)} | Closing ${amount(row.closingPendingAmount)}`,
+                        `बिल ${amount(row.billedAmount)} | मिला ${amount(row.receivedAmount)} | बाकी ${amount(row.pendingAmount)} | क्लोजिंग ${amount(row.closingPendingAmount)}`
+                      )}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </View>
           </View>
 
           <View

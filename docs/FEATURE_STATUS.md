@@ -22,7 +22,7 @@ As of February 28, 2026 (mobile codebase + API contract in `app/services/api.ts`
 | Feed Monitoring | Partial | Per-cow/group/all feed logs, ration phase handling, feed management task support. | Optimization engine, intake-vs-yield intelligence, stricter workflow approvals. |
 | Feed Management | Partial | Raw material, recipes, SOP tasks, low stock awareness. | Procurement planning, reorder automation, 30/90-day forecasting. |
 | Customers | Implemented | Customer master, subscription toggles, subscription lines (AM/PM/products), pause/skip dates, balance tracking. | Proration and advanced billing rules. |
-| Sales | Partial | Sale create/edit, cooperative quality pricing inputs, ledger, reconciliation, month-close bulk ops. | Deeper invoice lifecycle, stronger exception handling and approvals. |
+| Sales | Partial | Sale create/edit, cooperative quality pricing inputs, ledger, reconciliation, month-close bulk ops, and subscription invoice/statement APIs with proration + holiday credit math. | Deeper invoice lifecycle (export, final posting states), stronger exception handling and approvals. |
 | Delivery Ops | Implemented | Daily route board, delivery task generation from subscriptions, add-ons, assignment/reassignment, run close, reconciliation, auto-assignment support, bulk pending-stop status updates, route optimization, and SLA tracking. | Richer operator UX patterns for very large route volume. |
 | Delivery + Stock Link | Partial | Delivery status updates trigger day stock sync; shift-closure banner prompts milk-to-curd transfer. | Fully automated no-click closure orchestration + notification channels. |
 | Tasking (Unified) | Implemented | Today Tasks + Worklist combined into one operational board; old routes redirect to unified board. | Recurring templates, escalation rules, reminder notifications. |
@@ -49,7 +49,7 @@ As of February 28, 2026 (mobile codebase + API contract in `app/services/api.ts`
 - Done: Delivery route optimization + SLA tracking for high-volume operations.
 
 ### Phase 2
-- Subscription billing depth: proration, holiday handling, monthly statements/invoices.
+- In progress: Subscription billing depth (proration, holiday handling, monthly statements/invoices).
 - Per-animal profitability analytics: milk value vs feed/treatment/labor.
 - Inventory forecasting: 30/90-day feed planning with reorder recommendations.
 - Task automation: recurring templates, escalation, reminders.

@@ -877,6 +877,72 @@ export type CustomerSubscriptionStatementResponse = {
   dailyRows: CustomerSubscriptionStatementDailyRowResponse[];
 };
 
+export type CustomerSubscriptionInvoiceLineItemResponse = {
+  code: string;
+  label: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  note?: string | null;
+};
+
+export type CustomerSubscriptionInvoiceResponse = {
+  customerId: string;
+  customerName: string;
+  customerType: CustomerType;
+  routeName?: string | null;
+  collectionPoint?: string | null;
+  month: string;
+  dateFrom: string;
+  dateTo: string;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate: string;
+  subscriptionActive: boolean;
+  pricingMode: string;
+  prorationFactor: number;
+  cycleDays: number;
+  activePlanDays: number;
+  pausedDays: number;
+  skipDays: number;
+  billedDays: number;
+  plannedQty: number;
+  plannedAmount: number;
+  holidayCreditAmount: number;
+  billedQty: number;
+  billedAmount: number;
+  receivedAmount: number;
+  pendingAmount: number;
+  addOnBilledAmount: number;
+  underDeliveryCreditAmount: number;
+  openingPendingAmount: number;
+  closingPendingAmount: number;
+  currentRunningBalance: number;
+  invoiceLineItems: CustomerSubscriptionInvoiceLineItemResponse[];
+  dailyRows: CustomerSubscriptionStatementDailyRowResponse[];
+};
+
+export type CustomerSubscriptionInvoiceSummaryResponse = {
+  customerId: string;
+  customerName: string;
+  customerType: CustomerType;
+  routeName?: string | null;
+  month: string;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate: string;
+  plannedAmount: number;
+  holidayCreditAmount: number;
+  billedAmount: number;
+  receivedAmount: number;
+  pendingAmount: number;
+  openingPendingAmount: number;
+  closingPendingAmount: number;
+  addOnBilledAmount: number;
+  underDeliveryCreditAmount: number;
+  prorationFactor: number;
+};
+
 export type SettlementReconciliationRowResponse = {
   customerName: string;
   customerType: CustomerType;
@@ -1891,6 +1957,33 @@ export const SalesApi = {
     if (params.includeDaily !== undefined) search.set("includeDaily", String(params.includeDaily));
     return http<CustomerSubscriptionStatementResponse>(
       `${API_BASE_URL}/api/sales/subscription-statement?${search.toString()}`
+    );
+  },
+
+  subscriptionInvoice: (params: {
+    customerId: string;
+    month?: string;
+    includeDaily?: boolean;
+  }) => {
+    const search = new URLSearchParams();
+    search.set("customerId", params.customerId);
+    if (params.month) search.set("month", params.month);
+    if (params.includeDaily !== undefined) search.set("includeDaily", String(params.includeDaily));
+    return http<CustomerSubscriptionInvoiceResponse>(
+      `${API_BASE_URL}/api/sales/subscription-invoice?${search.toString()}`
+    );
+  },
+
+  subscriptionInvoices: (params?: {
+    month?: string;
+    customerType?: CustomerType;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.month) search.set("month", params.month);
+    if (params?.customerType) search.set("customerType", params.customerType);
+    const query = search.toString();
+    return http<CustomerSubscriptionInvoiceSummaryResponse[]>(
+      `${API_BASE_URL}/api/sales/subscription-invoices${query ? `?${query}` : ""}`
     );
   },
 

@@ -4,9 +4,9 @@ Last updated: March 5, 2026.
 
 ## In Progress
 - [ ] Phase 2.1: Subscription billing depth
-  - [ ] Proration on plan change/start/stop
-  - [ ] Holiday/skip billing rules
-  - [ ] Monthly statement generation
+  - [x] Proration on plan change/start/stop
+  - [x] Holiday/skip billing rules
+  - [x] Monthly statement generation
   - [ ] Invoice-ready API payloads
 
 ## Next Queue
