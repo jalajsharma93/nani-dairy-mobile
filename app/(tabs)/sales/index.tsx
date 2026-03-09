@@ -157,6 +157,10 @@ export default function SalesScreen() {
   const [subscriptionInvoiceUpdatingStatus, setSubscriptionInvoiceUpdatingStatus] = useState(false);
   const [subscriptionInvoiceReopenReason, setSubscriptionInvoiceReopenReason] = useState("");
   const [subscriptionInvoice, setSubscriptionInvoice] = useState<CustomerSubscriptionInvoiceResponse | null>(null);
+  const [saleFormInvoiceLock, setSaleFormInvoiceLock] = useState<CustomerSubscriptionInvoiceSummaryResponse | null>(null);
+  const [saleFormInvoiceLockLoading, setSaleFormInvoiceLockLoading] = useState(false);
+  const [saleFormInvoiceOverrideEnabled, setSaleFormInvoiceOverrideEnabled] = useState(false);
+  const [saleFormInvoiceOverrideReason, setSaleFormInvoiceOverrideReason] = useState("");
   const [subscriptionInvoiceSummaries, setSubscriptionInvoiceSummaries] = useState<
     CustomerSubscriptionInvoiceSummaryResponse[]
   >([]);
@@ -192,6 +196,18 @@ export default function SalesScreen() {
     () => customerRecords.filter((row) => row.isActive && row.subscriptionActive),
     [customerRecords]
   );
+  const selectedSaleCustomer = useMemo(() => {
+    if (customerId?.trim()) {
+      return customerRecords.find((row) => row.customerId === customerId) ?? null;
+    }
+    if (!customerName.trim()) {
+      return null;
+    }
+    return customerRecords.find((row) => row.customerName === customerName) ?? null;
+  }, [customerId, customerName, customerRecords]);
+  const saleFormLockedByInvoice = !!saleFormInvoiceLock && !saleFormInvoiceOverrideEnabled;
+  const saleFormOverrideReasonRequired =
+    !!saleFormInvoiceLock && saleFormInvoiceOverrideEnabled && !saleFormInvoiceOverrideReason.trim();
   const statementBulkPreviewSummary = useMemo(() => {
     if (!statementBulkPreviewResult) {
       return null;
@@ -565,6 +581,62 @@ export default function SalesScreen() {
     setSubscriptionInvoiceCustomerId(subscriptionCustomers[0].customerId);
   }, [subscriptionCustomers, subscriptionInvoiceCustomerId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSaleFormInvoiceLock = async () => {
+      if (!canManageSales) {
+        setSaleFormInvoiceLock(null);
+        setSaleFormInvoiceLockLoading(false);
+        return;
+      }
+
+      const month = dispatchDate.slice(0, 7);
+      if (
+        !selectedSaleCustomer?.customerId ||
+        !selectedSaleCustomer.subscriptionActive ||
+        !ISO_MONTH_REGEX.test(month)
+      ) {
+        setSaleFormInvoiceLock(null);
+        setSaleFormInvoiceLockLoading(false);
+        return;
+      }
+
+      try {
+        setSaleFormInvoiceLockLoading(true);
+        const rows = await SalesApi.subscriptionInvoices({ month });
+        if (cancelled) {
+          return;
+        }
+        const row = rows.find((entry) => entry.customerId === selectedSaleCustomer.customerId) ?? null;
+        if (row && row.status !== "DRAFT") {
+          setSaleFormInvoiceLock(row);
+          return;
+        }
+        setSaleFormInvoiceLock(null);
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setSaleFormInvoiceLock(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSaleFormInvoiceLockLoading(false);
+        }
+      }
+    };
+
+    void loadSaleFormInvoiceLock();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageSales, dispatchDate, selectedSaleCustomer?.customerId, selectedSaleCustomer?.subscriptionActive]);
+
+  useEffect(() => {
+    setSaleFormInvoiceOverrideEnabled(false);
+    setSaleFormInvoiceOverrideReason("");
+  }, [dispatchDate, customerId, customerName, editingSaleId]);
+
   const refreshAll = useCallback(() => {
     void loadSales();
     void loadDelivery();
@@ -629,6 +701,8 @@ export default function SalesScreen() {
   }, [isCooperativeMilk, quantity, fatPercent, snfPercent, fatRatePerKg, snfRatePerKg]);
 
   const totalPreviewDisplay = qualitySettlementPreview?.total ?? totalPreview;
+  const saleSaveDisabled =
+    saving || saleFormInvoiceLockLoading || saleFormLockedByInvoice || saleFormOverrideReasonRequired;
   const statementReconciliationByKey = useMemo(() => {
     const map = new Map<string, SettlementReconciliationRowResponse>();
     statementReconciliationRows.forEach((row) => {
@@ -666,6 +740,10 @@ export default function SalesScreen() {
         setCustomerRecords((prev) => [created, ...prev]);
       }
       setCustomers((prev) => (prev.includes(name) ? prev : [name, ...prev]));
+      setSaleFormInvoiceLock(null);
+      setSaleFormInvoiceLockLoading(true);
+      setSaleFormInvoiceOverrideEnabled(false);
+      setSaleFormInvoiceOverrideReason("");
       setCustomerId(selected?.customerId ?? null);
       setCustomerName(name);
       setNewCustomerName("");
@@ -700,6 +778,10 @@ export default function SalesScreen() {
     setSettlementCycle("MONTHLY");
     setOverrideWithdrawalLock(false);
     setOverrideReason("");
+    setSaleFormInvoiceLock(null);
+    setSaleFormInvoiceLockLoading(false);
+    setSaleFormInvoiceOverrideEnabled(false);
+    setSaleFormInvoiceOverrideReason("");
     setNotes("");
   };
 
@@ -793,6 +875,28 @@ export default function SalesScreen() {
       return null;
     }
 
+    if (saleFormInvoiceLock && saleFormInvoiceOverrideEnabled && !saleFormInvoiceOverrideReason.trim()) {
+      Alert.alert(
+        x("Missing override reason", "ओवरराइड कारण अधूरा"),
+        x(
+          "Enter override reason to edit sale in finalized/posted invoice period.",
+          "फाइनल/पोस्टेड इनवॉइस अवधि में बिक्री बदलने के लिए override reason दर्ज करें।"
+        )
+      );
+      return null;
+    }
+
+    const noteParts: string[] = [];
+    const baseNotes = notes.trim();
+    if (baseNotes) {
+      noteParts.push(baseNotes);
+    }
+    if (saleFormInvoiceLock && saleFormInvoiceOverrideEnabled) {
+      noteParts.push(
+        `Invoice override ${saleFormInvoiceLock.invoiceNumber} (${saleFormInvoiceLock.status}) reason: ${saleFormInvoiceOverrideReason.trim()}`
+      );
+    }
+
     return {
       dispatchDate,
       customerType,
@@ -805,7 +909,7 @@ export default function SalesScreen() {
       paymentMode,
       batchDate: productType === "MILK" ? batchDate : null,
       batchShift: productType === "MILK" ? batchShift : null,
-      notes: notes.trim() || null,
+      notes: noteParts.join(" | ") || null,
       routeName: isCooperativeMilk ? routeName.trim() || null : null,
       collectionPoint: isCooperativeMilk ? collectionPoint.trim() || null : null,
       fatPercent: isCooperativeMilk && hasQualityInput ? fat : null,
@@ -826,6 +930,71 @@ export default function SalesScreen() {
         x("Only ADMIN or MANAGER users can manage sales.", "बिक्री प्रबंधन सिर्फ ADMIN या MANAGER कर सकता है।")
       );
       return;
+    }
+
+    if (saleFormInvoiceLockLoading) {
+      Alert.alert(
+        x("Please wait", "कृपया प्रतीक्षा करें"),
+        x("Checking invoice lock status. Try again in a moment.", "इनवॉइस लॉक स्थिति जांची जा रही है। एक क्षण बाद फिर प्रयास करें।")
+      );
+      return;
+    }
+
+    if (saleFormLockedByInvoice) {
+      Alert.alert(
+        x("Invoice locked", "इनवॉइस लॉक"),
+        x(
+          `Invoice ${saleFormInvoiceLock?.invoiceNumber ?? ""} is ${saleFormInvoiceLock?.status}. Enable override to edit.`,
+          `इनवॉइस ${saleFormInvoiceLock?.invoiceNumber ?? ""} ${saleFormInvoiceLock?.status} है। बदलाव के लिए ओवरराइड चालू करें।`
+        )
+      );
+      return;
+    }
+
+    if (saleFormOverrideReasonRequired) {
+      Alert.alert(
+        x("Missing override reason", "ओवरराइड कारण अधूरा"),
+        x(
+          "Enter override reason before saving in finalized/posted invoice period.",
+          "फाइनल/पोस्टेड इनवॉइस अवधि में सेव करने से पहले override reason दर्ज करें।"
+        )
+      );
+      return;
+    }
+
+    const dispatchMonth = dispatchDate.slice(0, 7);
+    if (selectedSaleCustomer?.customerId && selectedSaleCustomer.subscriptionActive && ISO_MONTH_REGEX.test(dispatchMonth)) {
+      try {
+        const monthInvoices = await SalesApi.subscriptionInvoices({ month: dispatchMonth });
+        const matchingInvoice = monthInvoices.find((row) => row.customerId === selectedSaleCustomer.customerId) ?? null;
+        if (matchingInvoice && matchingInvoice.status !== "DRAFT") {
+          setSaleFormInvoiceLock(matchingInvoice);
+          if (!saleFormInvoiceOverrideEnabled) {
+            Alert.alert(
+              x("Invoice locked", "इनवॉइस लॉक"),
+              x(
+                `Invoice ${matchingInvoice.invoiceNumber} is ${matchingInvoice.status}. Enable override to edit.`,
+                `इनवॉइस ${matchingInvoice.invoiceNumber} ${matchingInvoice.status} है। बदलाव के लिए ओवरराइड चालू करें।`
+              )
+            );
+            return;
+          }
+          if (!saleFormInvoiceOverrideReason.trim()) {
+            Alert.alert(
+              x("Missing override reason", "ओवरराइड कारण अधूरा"),
+              x(
+                "Enter override reason before saving in finalized/posted invoice period.",
+                "फाइनल/पोस्टेड इनवॉइस अवधि में सेव करने से पहले override reason दर्ज करें।"
+              )
+            );
+            return;
+          }
+        } else {
+          setSaleFormInvoiceLock(null);
+        }
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     const payload = buildPayload();
@@ -922,6 +1091,10 @@ export default function SalesScreen() {
       return;
     }
 
+    setSaleFormInvoiceLock(null);
+    setSaleFormInvoiceLockLoading(true);
+    setSaleFormInvoiceOverrideEnabled(false);
+    setSaleFormInvoiceOverrideReason("");
     setEditingSaleId(sale.saleId);
     setDispatchDate(sale.dispatchDate);
     setCustomerType(sale.customerType);
@@ -1542,7 +1715,13 @@ export default function SalesScreen() {
         </Text>
         <DateInput
           value={dispatchDate}
-          onChangeText={setDispatchDate}
+          onChangeText={(value) => {
+            setSaleFormInvoiceLock(null);
+            setSaleFormInvoiceLockLoading(true);
+            setSaleFormInvoiceOverrideEnabled(false);
+            setSaleFormInvoiceOverrideReason("");
+            setDispatchDate(value);
+          }}
           placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
         />
 
@@ -1554,6 +1733,10 @@ export default function SalesScreen() {
             <Pressable
               key={row.customerId}
               onPress={() => {
+                setSaleFormInvoiceLock(null);
+                setSaleFormInvoiceLockLoading(true);
+                setSaleFormInvoiceOverrideEnabled(false);
+                setSaleFormInvoiceOverrideReason("");
                 setCustomerId(row.customerId);
                 setCustomerName(row.customerName);
                 applyCustomerDefaults(row);
@@ -1575,6 +1758,10 @@ export default function SalesScreen() {
                 <Pressable
                   key={name}
                   onPress={() => {
+                    setSaleFormInvoiceLock(null);
+                    setSaleFormInvoiceLockLoading(true);
+                    setSaleFormInvoiceOverrideEnabled(false);
+                    setSaleFormInvoiceOverrideReason("");
                     setCustomerId(null);
                     setCustomerName(name);
                     applyCustomerDefaults(findCustomerRecordByName(name));
@@ -1646,6 +1833,84 @@ export default function SalesScreen() {
             </Text>
           );
         })()}
+
+        {saleFormInvoiceLockLoading && selectedSaleCustomer?.subscriptionActive ? (
+          <View
+            style={{
+              marginTop: 8,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.info,
+              backgroundColor: DairyColors.infoSoft,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.info, fontWeight: "700" }}>
+              {x("Checking invoice lifecycle lock...", "इनवॉइस लाइफसाइकल लॉक जांचा जा रहा है...")}
+            </Text>
+          </View>
+        ) : null}
+
+        {saleFormInvoiceLock ? (
+          <View
+            style={{
+              marginTop: 8,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.warning,
+              backgroundColor: DairyColors.warningSoft,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.warning, fontWeight: "800" }}>
+              {x(
+                `Invoice ${saleFormInvoiceLock.invoiceNumber} (${saleFormInvoiceLock.month}) is ${saleFormInvoiceLock.status}. Sale form is read-only by default.`,
+                `इनवॉइस ${saleFormInvoiceLock.invoiceNumber} (${saleFormInvoiceLock.month}) ${saleFormInvoiceLock.status} है। बिक्री फॉर्म डिफ़ॉल्ट रूप से रीड-ओनली है।`
+              )}
+            </Text>
+            <Text style={{ marginTop: 4, color: DairyColors.warning }}>
+              {x(
+                `Issue ${saleFormInvoiceLock.issueDate} | Due ${saleFormInvoiceLock.dueDate}`,
+                `जारी ${saleFormInvoiceLock.issueDate} | देय ${saleFormInvoiceLock.dueDate}`
+              )}
+            </Text>
+            <Pressable
+              onPress={() => setSaleFormInvoiceOverrideEnabled((prev) => !prev)}
+              style={{
+                marginTop: 8,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: saleFormInvoiceOverrideEnabled ? DairyColors.warning : DairyColors.border,
+                backgroundColor: saleFormInvoiceOverrideEnabled ? DairyColors.surface : DairyColors.surfaceMuted,
+                paddingVertical: 8,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {saleFormInvoiceOverrideEnabled
+                  ? x("Disable Invoice Override", "इनवॉइस ओवरराइड बंद करें")
+                  : x("Enable Invoice Override (ADMIN/MANAGER)", "इनवॉइस ओवरराइड चालू करें (ADMIN/MANAGER)")}
+              </Text>
+            </Pressable>
+            {saleFormInvoiceOverrideEnabled ? (
+              <TextInput
+                value={saleFormInvoiceOverrideReason}
+                onChangeText={setSaleFormInvoiceOverrideReason}
+                placeholder={x("Override reason (required)", "ओवरराइड कारण (जरूरी)")}
+                placeholderTextColor="#99A99A"
+                style={{
+                  marginTop: 8,
+                  borderWidth: 1,
+                  borderColor: DairyColors.warning,
+                  borderRadius: 10,
+                  padding: 10,
+                  color: DairyColors.textPrimary,
+                  backgroundColor: DairyColors.surface,
+                }}
+              />
+            ) : null}
+          </View>
+        ) : null}
 
         <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
           {x("Customer Type", "ग्राहक प्रकार")}
@@ -2067,18 +2332,24 @@ export default function SalesScreen() {
         </View>
 
         <Pressable
-          disabled={saving}
+          disabled={saleSaveDisabled}
           onPress={saveSale}
           style={{
             marginTop: 10,
             padding: 12,
             borderRadius: 10,
-            backgroundColor: saving ? DairyColors.textSecondary : DairyColors.primary,
+            backgroundColor: saleSaveDisabled ? DairyColors.textSecondary : DairyColors.primary,
             alignItems: "center",
           }}
         >
           <Text style={{ color: "white", fontWeight: "800" }}>
-            {saving
+            {saleFormInvoiceLockLoading
+              ? x("Checking Invoice...", "इनवॉइस जांच रहे हैं...")
+              : saleFormLockedByInvoice
+                ? x("Invoice Locked", "इनवॉइस लॉक")
+                : saleFormOverrideReasonRequired
+                  ? x("Add Override Reason", "ओवरराइड कारण जोड़ें")
+                  : saving
               ? x("Saving...", "सेव हो रहा है...")
               : editingSaleId
                 ? x("Update Sale", "बिक्री अपडेट करें")
