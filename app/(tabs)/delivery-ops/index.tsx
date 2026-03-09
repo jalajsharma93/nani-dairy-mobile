@@ -119,6 +119,9 @@ export default function DeliveryOpsScreen() {
   const { x, label } = useI18n();
   const canAccess = hasAnyRole("ADMIN", "MANAGER", "DELIVERY", "WORKER");
   const isPrivileged = hasAnyRole("ADMIN", "MANAGER");
+  const canCreateAddOn = hasAnyRole("ADMIN", "MANAGER", "DELIVERY");
+  const canBulkRunActions = hasAnyRole("ADMIN", "MANAGER", "DELIVERY");
+  const canViewTeamReconciliation = isPrivileged;
 
   const [date, setDate] = useState(todayLocalISO());
   const [shiftFilter, setShiftFilter] = useState<Shift | "ALL">("ALL");
@@ -750,6 +753,16 @@ export default function DeliveryOpsScreen() {
   );
 
   const saveAddOn = async () => {
+    if (!canCreateAddOn) {
+      Alert.alert(
+        x("Role restricted", "रोल अनुमति नहीं"),
+        x(
+          "Only ADMIN, MANAGER or DELIVERY can add extra delivery requests.",
+          "एक्स्ट्रा डिलीवरी रिक्वेस्ट सिर्फ ADMIN, MANAGER या DELIVERY जोड़ सकते हैं।"
+        )
+      );
+      return;
+    }
     const qty = Number(addOnQty);
     if (!Number.isFinite(qty) || qty <= 0) {
       Alert.alert(
@@ -1155,6 +1168,16 @@ export default function DeliveryOpsScreen() {
   };
 
   const bulkUpdateRunPending = async (status: "DELIVERED" | "SKIPPED") => {
+    if (!canBulkRunActions) {
+      Alert.alert(
+        x("Role restricted", "रोल अनुमति नहीं"),
+        x(
+          "Only ADMIN, MANAGER or DELIVERY can use bulk run actions.",
+          "बल्क रन एक्शन सिर्फ ADMIN, MANAGER या DELIVERY उपयोग कर सकते हैं।"
+        )
+      );
+      return;
+    }
     const pendingTasks = runTasks.filter((task) => task.status === "PENDING");
     if (pendingTasks.length === 0) {
       Alert.alert(
@@ -1849,14 +1872,14 @@ export default function DeliveryOpsScreen() {
       </View>
 
       <View
-        style={{
-          marginTop: 12,
-          borderWidth: 1,
-          borderColor: DairyColors.border,
-          borderRadius: 12,
-          backgroundColor: DairyColors.surface,
-          padding: 10,
-        }}
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 12,
+            backgroundColor: DairyColors.surface,
+            padding: 10,
+          }}
       >
         <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
           {x("Run Mode", "रन मोड")}
@@ -2113,44 +2136,46 @@ export default function DeliveryOpsScreen() {
               `रूट ${runRoute} | शिफ्ट ${runShift}`
             )}
           </Text>
-          <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <Pressable
-              disabled={bulkUpdatingRun || runSummary.pendingStops <= 0}
-              onPress={() => void bulkUpdateRunPending("DELIVERED")}
-              style={{
-                borderRadius: 10,
-                backgroundColor:
-                  bulkUpdatingRun || runSummary.pendingStops <= 0
-                    ? DairyColors.textSecondary
-                    : DairyColors.success,
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-              }}
-            >
-              <Text style={{ color: "white", fontWeight: "800" }}>
-                {bulkUpdatingRun
-                  ? x("Updating...", "अपडेट हो रहा...")
-                  : x("Deliver All Pending", "सभी पेंडिंग डिलीवर")}
-              </Text>
-            </Pressable>
-            <Pressable
-              disabled={bulkUpdatingRun || runSummary.pendingStops <= 0}
-              onPress={() => void bulkUpdateRunPending("SKIPPED")}
-              style={{
-                borderRadius: 10,
-                backgroundColor:
-                  bulkUpdatingRun || runSummary.pendingStops <= 0
-                    ? DairyColors.textSecondary
-                    : DairyColors.warning,
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-              }}
-            >
-              <Text style={{ color: "white", fontWeight: "800" }}>
-                {x("Skip All Pending", "सभी पेंडिंग स्किप")}
-              </Text>
-            </Pressable>
-          </View>
+          {canBulkRunActions ? (
+            <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <Pressable
+                disabled={bulkUpdatingRun || runSummary.pendingStops <= 0}
+                onPress={() => void bulkUpdateRunPending("DELIVERED")}
+                style={{
+                  borderRadius: 10,
+                  backgroundColor:
+                    bulkUpdatingRun || runSummary.pendingStops <= 0
+                      ? DairyColors.textSecondary
+                      : DairyColors.success,
+                  paddingHorizontal: 10,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: "800" }}>
+                  {bulkUpdatingRun
+                    ? x("Updating...", "अपडेट हो रहा...")
+                    : x("Deliver All Pending", "सभी पेंडिंग डिलीवर")}
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={bulkUpdatingRun || runSummary.pendingStops <= 0}
+                onPress={() => void bulkUpdateRunPending("SKIPPED")}
+                style={{
+                  borderRadius: 10,
+                  backgroundColor:
+                    bulkUpdatingRun || runSummary.pendingStops <= 0
+                      ? DairyColors.textSecondary
+                      : DairyColors.warning,
+                  paddingHorizontal: 10,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: "800" }}>
+                  {x("Skip All Pending", "सभी पेंडिंग स्किप")}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
 
           {runTasks.map((task) => {
             const tone = statusTone(task.status);
@@ -2267,58 +2292,59 @@ export default function DeliveryOpsScreen() {
                       <Text style={{ color: "white", fontWeight: "800" }}>{x("Claim Task", "टास्क लें")}</Text>
                     </Pressable>
                   ) : null}
-                  <Pressable
-                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
-                    onPress={() =>
-                      void updateTaskStatus(task, "DELIVERED", {
-                        collectedAmountText: runCollectedByTaskId[task.deliveryTaskId] ?? "",
-                        notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
-                      })
-                    }
-                    style={{
-                      borderRadius: 10,
-                      backgroundColor: DairyColors.success,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      opacity: canAct ? 1 : 0.55,
-                    }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "800" }}>{x("Delivered", "डिलीवर")}</Text>
-                  </Pressable>
-                  <Pressable
-                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
-                    onPress={() =>
-                      void updateTaskStatus(task, "SKIPPED", {
-                        notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
-                      })
-                    }
-                    style={{
-                      borderRadius: 10,
-                      backgroundColor: DairyColors.warning,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      opacity: canAct ? 1 : 0.55,
-                    }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "800" }}>{x("Skipped", "स्किप")}</Text>
-                  </Pressable>
-                  <Pressable
-                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
-                    onPress={() =>
-                      void updateTaskStatus(task, "PENDING", {
-                        notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
-                      })
-                    }
-                    style={{
-                      borderRadius: 10,
-                      backgroundColor: DairyColors.textSecondary,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      opacity: canAct ? 1 : 0.55,
-                    }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "800" }}>{x("Pending", "बाकी")}</Text>
-                  </Pressable>
+                  {canAct ? (
+                    <>
+                      <Pressable
+                        disabled={taskBusy(task.deliveryTaskId)}
+                        onPress={() =>
+                          void updateTaskStatus(task, "DELIVERED", {
+                            collectedAmountText: runCollectedByTaskId[task.deliveryTaskId] ?? "",
+                            notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
+                          })
+                        }
+                        style={{
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.success,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: "white", fontWeight: "800" }}>{x("Delivered", "डिलीवर")}</Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={taskBusy(task.deliveryTaskId)}
+                        onPress={() =>
+                          void updateTaskStatus(task, "SKIPPED", {
+                            notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
+                          })
+                        }
+                        style={{
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.warning,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: "white", fontWeight: "800" }}>{x("Skipped", "स्किप")}</Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={taskBusy(task.deliveryTaskId)}
+                        onPress={() =>
+                          void updateTaskStatus(task, "PENDING", {
+                            notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
+                          })
+                        }
+                        style={{
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.textSecondary,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: "white", fontWeight: "800" }}>{x("Pending", "बाकी")}</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
                 </View>
                 {!canAct ? (
                   <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
@@ -2472,7 +2498,8 @@ export default function DeliveryOpsScreen() {
         </View>
       ) : null}
 
-      <View
+      {canCreateAddOn ? (
+        <View
         style={{
           marginTop: 12,
           borderWidth: 1,
@@ -2677,7 +2704,8 @@ export default function DeliveryOpsScreen() {
             {addOnSaving ? x("Saving...", "सेव हो रहा है...") : x("Add Extra Request", "एक्स्ट्रा रिक्वेस्ट जोड़ें")}
           </Text>
         </Pressable>
-      </View>
+        </View>
+      ) : null}
 
       {grouped.map((group) => (
         <View
@@ -2851,47 +2879,48 @@ export default function DeliveryOpsScreen() {
                       <Text style={{ color: "white", fontWeight: "800" }}>{x("Claim Task", "टास्क लें")}</Text>
                     </Pressable>
                   ) : null}
-                  <Pressable
-                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
-                    onPress={() => void updateTaskStatus(task, "DELIVERED")}
-                    style={{
-                      borderRadius: 10,
-                      backgroundColor: DairyColors.success,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      opacity: canAct ? 1 : 0.55,
-                    }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "800" }}>
-                      {x("Delivered", "डिलीवर")}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
-                    onPress={() => void updateTaskStatus(task, "SKIPPED")}
-                    style={{
-                      borderRadius: 10,
-                      backgroundColor: DairyColors.warning,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      opacity: canAct ? 1 : 0.55,
-                    }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "800" }}>{x("Skipped", "स्किप")}</Text>
-                  </Pressable>
-                  <Pressable
-                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
-                    onPress={() => void updateTaskStatus(task, "PENDING")}
-                    style={{
-                      borderRadius: 10,
-                      backgroundColor: DairyColors.textSecondary,
-                      paddingHorizontal: 10,
-                      paddingVertical: 8,
-                      opacity: canAct ? 1 : 0.55,
-                    }}
-                  >
-                    <Text style={{ color: "white", fontWeight: "800" }}>{x("Pending", "बाकी")}</Text>
-                  </Pressable>
+                  {canAct ? (
+                    <>
+                      <Pressable
+                        disabled={taskBusy(task.deliveryTaskId)}
+                        onPress={() => void updateTaskStatus(task, "DELIVERED")}
+                        style={{
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.success,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: "white", fontWeight: "800" }}>
+                          {x("Delivered", "डिलीवर")}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={taskBusy(task.deliveryTaskId)}
+                        onPress={() => void updateTaskStatus(task, "SKIPPED")}
+                        style={{
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.warning,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: "white", fontWeight: "800" }}>{x("Skipped", "स्किप")}</Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={taskBusy(task.deliveryTaskId)}
+                        onPress={() => void updateTaskStatus(task, "PENDING")}
+                        style={{
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.textSecondary,
+                          paddingHorizontal: 10,
+                          paddingVertical: 8,
+                        }}
+                      >
+                        <Text style={{ color: "white", fontWeight: "800" }}>{x("Pending", "बाकी")}</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
                 </View>
                 {!canAct ? (
                   <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
@@ -2904,7 +2933,8 @@ export default function DeliveryOpsScreen() {
         </View>
       ))}
 
-      <View
+      {canViewTeamReconciliation ? (
+        <View
         style={{
           marginTop: 14,
           borderWidth: 1,
@@ -2962,7 +2992,8 @@ export default function DeliveryOpsScreen() {
             </View>
           ))
         )}
-      </View>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
