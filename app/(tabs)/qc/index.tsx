@@ -216,6 +216,13 @@ export default function QualityCheckScreen() {
   }, [date, shift]);
 
   useEffect(() => {
+    if (!isAdmin && overrideRecommendedStatus) {
+      setOverrideRecommendedStatus(false);
+      setOverrideReason("");
+    }
+  }, [isAdmin, overrideRecommendedStatus]);
+
+  useEffect(() => {
     void refreshPendingSync();
   }, [refreshPendingSync]);
 
@@ -1185,6 +1192,7 @@ export default function QualityCheckScreen() {
             }}
           >
             <Pressable
+              disabled={batchLocked}
               onPress={() => setOverrideRecommendedStatus((prev) => !prev)}
               style={{
                 borderWidth: 1,
@@ -1194,6 +1202,7 @@ export default function QualityCheckScreen() {
                 paddingVertical: 8,
                 alignSelf: "flex-start",
                 backgroundColor: overrideRecommendedStatus ? DairyColors.warningSoft : DairyColors.surface,
+                opacity: batchLocked ? 0.5 : 1,
               }}
             >
               <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
@@ -1226,7 +1235,14 @@ export default function QualityCheckScreen() {
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
             {(["PASS", "HOLD", "REJECT"] as QcStatus[]).map((s) => {
               const tone = statusTone(s);
-              const disabled = !batch || updating !== "" || !anyCowReviewed || !step1Saved || batchLocked;
+              const disabled =
+                !batch ||
+                updating !== "" ||
+                !anyCowReviewed ||
+                !step1Saved ||
+                batchLocked ||
+                (overrideRecommendedStatus && !isAdmin) ||
+                (overrideRecommendedStatus && !overrideReason.trim());
               return (
                 <Pressable
                   key={s}

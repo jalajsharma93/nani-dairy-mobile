@@ -948,6 +948,10 @@ export default function SalesScreen() {
 
   const updateReconciliation = async (saleId: string, reconciled: boolean) => {
     if (!canManageSales) {
+      Alert.alert(
+        x("Role restricted", "रोल अनुमति नहीं"),
+        x("Only ADMIN or MANAGER can update reconciliation.", "रिकन्सिलिएशन सिर्फ ADMIN या MANAGER अपडेट कर सकता है।")
+      );
       return;
     }
     try {
@@ -3034,33 +3038,35 @@ export default function SalesScreen() {
                       {x("Payout cycle", "भुगतान चक्र")}:{" "}
                       {label("settlementCycle", (item.settlementCycle as SettlementCycle | null) ?? "MONTHLY")}
                     </Text>
-                    <Pressable
-                      disabled={reconcilingSaleId === item.saleId}
-                      onPress={() => updateReconciliation(item.saleId, !isReconciled)}
-                      style={{
-                        marginTop: 8,
-                        borderWidth: 1,
-                        borderColor: isReconciled ? DairyColors.warning : DairyColors.success,
-                        borderRadius: 10,
-                        alignSelf: "flex-start",
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        backgroundColor: isReconciled ? DairyColors.warningSoft : DairyColors.successSoft,
-                      }}
-                    >
-                      <Text
+                    {canManageSales ? (
+                      <Pressable
+                        disabled={reconcilingSaleId === item.saleId}
+                        onPress={() => updateReconciliation(item.saleId, !isReconciled)}
                         style={{
-                          color: isReconciled ? DairyColors.warning : DairyColors.success,
-                          fontWeight: "700",
+                          marginTop: 8,
+                          borderWidth: 1,
+                          borderColor: isReconciled ? DairyColors.warning : DairyColors.success,
+                          borderRadius: 10,
+                          alignSelf: "flex-start",
+                          paddingHorizontal: 12,
+                          paddingVertical: 8,
+                          backgroundColor: isReconciled ? DairyColors.warningSoft : DairyColors.successSoft,
                         }}
                       >
-                        {reconcilingSaleId === item.saleId
-                          ? x("Updating...", "अपडेट हो रहा है...")
-                          : isReconciled
-                            ? x("Mark Unreconciled", "रिकन्साइल हटाएं")
-                            : x("Mark Reconciled", "रिकन्साइल करें")}
-                      </Text>
-                    </Pressable>
+                        <Text
+                          style={{
+                            color: isReconciled ? DairyColors.warning : DairyColors.success,
+                            fontWeight: "700",
+                          }}
+                        >
+                          {reconcilingSaleId === item.saleId
+                            ? x("Updating...", "अपडेट हो रहा है...")
+                            : isReconciled
+                              ? x("Mark Unreconciled", "रिकन्साइल हटाएं")
+                              : x("Mark Reconciled", "रिकन्साइल करें")}
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </>
                 ) : null}
 
