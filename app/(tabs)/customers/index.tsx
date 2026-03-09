@@ -180,6 +180,13 @@ export default function CustomersScreen() {
   };
 
   const startEditSubscriptionLine = (row: CustomerSubscriptionLineResponse) => {
+    if (!canManageCustomers) {
+      Alert.alert(
+        x("Role restricted", "रोल अनुमति नहीं"),
+        x("Only ADMIN or MANAGER can edit subscription lines.", "सब्सक्रिप्शन लाइन बदलना सिर्फ ADMIN या MANAGER कर सकता है।")
+      );
+      return;
+    }
     setEditingLineId(row.subscriptionLineId);
     setLineShift(row.taskShift);
     setLineProduct(row.productType);
@@ -495,6 +502,13 @@ export default function CustomersScreen() {
   };
 
   const recordPayout = async (row: CustomerRecordResponse) => {
+    if (!canManageCustomers) {
+      Alert.alert(
+        x("Role restricted", "रोल अनुमति नहीं"),
+        x("Only ADMIN or MANAGER can record payouts.", "पेआउट रिकॉर्ड सिर्फ ADMIN या MANAGER कर सकता है।")
+      );
+      return;
+    }
     const raw = payoutAmountByCustomer[row.customerId]?.trim() ?? "";
     const amount = Number(raw);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -751,192 +765,200 @@ export default function CustomersScreen() {
                   <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
                     {x("Selected customer", "चुना हुआ ग्राहक")}: {plannerCustomer.customerName}
                   </Text>
-
-                  <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    {SHIFT_OPTIONS.map((option) => (
-                      <Pressable
-                        key={option}
-                        onPress={() => setLineShift(option)}
-                        style={{
-                          borderWidth: 1,
-                          borderColor: lineShift === option ? DairyColors.primary : DairyColors.border,
-                          backgroundColor: lineShift === option ? DairyColors.primarySoft : DairyColors.surface,
-                          borderRadius: 999,
-                          paddingHorizontal: 12,
-                          paddingVertical: 8,
-                        }}
-                      >
-                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{option}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-
-                  <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    {PRODUCT_OPTIONS.map((option) => (
-                      <Pressable
-                        key={option}
-                        onPress={() => setLineProduct(option)}
-                        style={{
-                          borderWidth: 1,
-                          borderColor: lineProduct === option ? DairyColors.primary : DairyColors.border,
-                          backgroundColor: lineProduct === option ? DairyColors.primarySoft : DairyColors.surface,
-                          borderRadius: 999,
-                          paddingHorizontal: 10,
-                          paddingVertical: 7,
-                        }}
-                      >
-                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{label("productType", option)}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-
-                  <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
-                    <TextInput
-                      value={lineQty}
-                      onChangeText={setLineQty}
-                      placeholder={x("Qty", "मात्रा")}
-                      placeholderTextColor="#99A99A"
-                      keyboardType="decimal-pad"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 10,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
-                    />
-                    <TextInput
-                      value={lineUnitPrice}
-                      onChangeText={setLineUnitPrice}
-                      placeholder={x("Unit Price", "यूनिट कीमत")}
-                      placeholderTextColor="#99A99A"
-                      keyboardType="decimal-pad"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 10,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
-                    />
-                  </View>
-
-                  <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
-                    <TextInput
-                      value={linePreferredTime}
-                      onChangeText={setLinePreferredTime}
-                      placeholder={x("Preferred time HH:mm", "पसंदीदा समय HH:mm")}
-                      placeholderTextColor="#99A99A"
-                      style={{
-                        flex: 1,
-                        borderWidth: 1,
-                        borderColor: DairyColors.border,
-                        borderRadius: 10,
-                        padding: 10,
-                        color: DairyColors.textPrimary,
-                        backgroundColor: DairyColors.surfaceMuted,
-                      }}
-                    />
-                    <View style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{x("Active", "सक्रिय")}</Text>
-                      <Switch value={lineActive} onValueChange={setLineActive} />
-                    </View>
-                  </View>
-
-                  <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
-                    <View style={{ flex: 1 }}>
-                      <DateInput
-                      value={lineStartDate}
-                      onChangeText={setLineStartDate}
-                      placeholder={x("Start date (YYYY-MM-DD)", "शुरुआत तारीख (YYYY-MM-DD)")}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <DateInput
-                      value={lineEndDate}
-                      onChangeText={setLineEndDate}
-                      placeholder={x("End date (YYYY-MM-DD)", "समाप्ति तारीख (YYYY-MM-DD)")}
-                      />
-                    </View>
-                  </View>
-
-                  <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    {DAY_OPTIONS.map((day) => {
-                      const selected = lineDays.includes(day);
-                      return (
-                        <Pressable
-                          key={day}
-                          onPress={() => toggleLineDay(day)}
-                          style={{
-                            borderWidth: 1,
-                            borderColor: selected ? DairyColors.primary : DairyColors.border,
-                            backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
-                            borderRadius: 999,
-                            paddingHorizontal: 10,
-                            paddingVertical: 7,
-                          }}
-                        >
-                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{day}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-
-                  <TextInput
-                    value={lineNotes}
-                    onChangeText={setLineNotes}
-                    placeholder={x("Line notes (optional)", "लाइन नोट्स (वैकल्पिक)")}
-                    placeholderTextColor="#99A99A"
-                    style={{
-                      marginTop: 8,
-                      borderWidth: 1,
-                      borderColor: DairyColors.border,
-                      borderRadius: 10,
-                      padding: 10,
-                      color: DairyColors.textPrimary,
-                      backgroundColor: DairyColors.surfaceMuted,
-                    }}
-                  />
-
                   {canManageCustomers ? (
-                    <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
-                      <Pressable
-                        disabled={plannerSaving}
-                        onPress={() => void saveSubscriptionLine()}
+                    <>
+                      <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        {SHIFT_OPTIONS.map((option) => (
+                          <Pressable
+                            key={option}
+                            onPress={() => setLineShift(option)}
+                            style={{
+                              borderWidth: 1,
+                              borderColor: lineShift === option ? DairyColors.primary : DairyColors.border,
+                              backgroundColor: lineShift === option ? DairyColors.primarySoft : DairyColors.surface,
+                              borderRadius: 999,
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{option}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+
+                      <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        {PRODUCT_OPTIONS.map((option) => (
+                          <Pressable
+                            key={option}
+                            onPress={() => setLineProduct(option)}
+                            style={{
+                              borderWidth: 1,
+                              borderColor: lineProduct === option ? DairyColors.primary : DairyColors.border,
+                              backgroundColor: lineProduct === option ? DairyColors.primarySoft : DairyColors.surface,
+                              borderRadius: 999,
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{label("productType", option)}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+
+                      <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                        <TextInput
+                          value={lineQty}
+                          onChangeText={setLineQty}
+                          placeholder={x("Qty", "मात्रा")}
+                          placeholderTextColor="#99A99A"
+                          keyboardType="decimal-pad"
+                          style={{
+                            flex: 1,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            padding: 10,
+                            color: DairyColors.textPrimary,
+                            backgroundColor: DairyColors.surfaceMuted,
+                          }}
+                        />
+                        <TextInput
+                          value={lineUnitPrice}
+                          onChangeText={setLineUnitPrice}
+                          placeholder={x("Unit Price", "यूनिट कीमत")}
+                          placeholderTextColor="#99A99A"
+                          keyboardType="decimal-pad"
+                          style={{
+                            flex: 1,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            padding: 10,
+                            color: DairyColors.textPrimary,
+                            backgroundColor: DairyColors.surfaceMuted,
+                          }}
+                        />
+                      </View>
+
+                      <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                        <TextInput
+                          value={linePreferredTime}
+                          onChangeText={setLinePreferredTime}
+                          placeholder={x("Preferred time HH:mm", "पसंदीदा समय HH:mm")}
+                          placeholderTextColor="#99A99A"
+                          style={{
+                            flex: 1,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            padding: 10,
+                            color: DairyColors.textPrimary,
+                            backgroundColor: DairyColors.surfaceMuted,
+                          }}
+                        />
+                        <View style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{x("Active", "सक्रिय")}</Text>
+                          <Switch value={lineActive} onValueChange={setLineActive} />
+                        </View>
+                      </View>
+
+                      <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                        <View style={{ flex: 1 }}>
+                          <DateInput
+                            value={lineStartDate}
+                            onChangeText={setLineStartDate}
+                            placeholder={x("Start date (YYYY-MM-DD)", "शुरुआत तारीख (YYYY-MM-DD)")}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <DateInput
+                            value={lineEndDate}
+                            onChangeText={setLineEndDate}
+                            placeholder={x("End date (YYYY-MM-DD)", "समाप्ति तारीख (YYYY-MM-DD)")}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                        {DAY_OPTIONS.map((day) => {
+                          const selected = lineDays.includes(day);
+                          return (
+                            <Pressable
+                              key={day}
+                              onPress={() => toggleLineDay(day)}
+                              style={{
+                                borderWidth: 1,
+                                borderColor: selected ? DairyColors.primary : DairyColors.border,
+                                backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                                borderRadius: 999,
+                                paddingHorizontal: 10,
+                                paddingVertical: 7,
+                              }}
+                            >
+                              <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{day}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+
+                      <TextInput
+                        value={lineNotes}
+                        onChangeText={setLineNotes}
+                        placeholder={x("Line notes (optional)", "लाइन नोट्स (वैकल्पिक)")}
+                        placeholderTextColor="#99A99A"
                         style={{
-                          flex: 1,
-                          borderRadius: 10,
-                          backgroundColor: plannerSaving ? DairyColors.textSecondary : DairyColors.primary,
-                          paddingVertical: 11,
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text style={{ color: "white", fontWeight: "800" }}>
-                          {plannerSaving
-                            ? x("Saving...", "सेव हो रहा है...")
-                            : editingLineId
-                              ? x("Update Line", "लाइन अपडेट करें")
-                              : x("Add Line", "लाइन जोड़ें")}
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={resetSubscriptionLineForm}
-                        style={{
+                          marginTop: 8,
                           borderWidth: 1,
                           borderColor: DairyColors.border,
                           borderRadius: 10,
-                          paddingHorizontal: 14,
-                          justifyContent: "center",
+                          padding: 10,
+                          color: DairyColors.textPrimary,
+                          backgroundColor: DairyColors.surfaceMuted,
                         }}
-                      >
-                        <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>{x("Clear", "हटाएं")}</Text>
-                      </Pressable>
-                    </View>
-                  ) : null}
+                      />
+
+                      <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                        <Pressable
+                          disabled={plannerSaving}
+                          onPress={() => void saveSubscriptionLine()}
+                          style={{
+                            flex: 1,
+                            borderRadius: 10,
+                            backgroundColor: plannerSaving ? DairyColors.textSecondary : DairyColors.primary,
+                            paddingVertical: 11,
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: "white", fontWeight: "800" }}>
+                            {plannerSaving
+                              ? x("Saving...", "सेव हो रहा है...")
+                              : editingLineId
+                                ? x("Update Line", "लाइन अपडेट करें")
+                                : x("Add Line", "लाइन जोड़ें")}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={resetSubscriptionLineForm}
+                          style={{
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            paddingHorizontal: 14,
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>{x("Clear", "हटाएं")}</Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+                      {x(
+                        "Read-only: only ADMIN or MANAGER can add or edit subscription lines.",
+                        "रीड-ओनली: सब्सक्रिप्शन लाइन जोड़ना या बदलना सिर्फ ADMIN या MANAGER कर सकता है।"
+                      )}
+                    </Text>
+                  )}
 
                   <View style={{ marginTop: 10, gap: 8 }}>
                     {plannerRows.length === 0 ? (
