@@ -392,6 +392,20 @@ export default function SalesScreen() {
 
   const updateSubscriptionInvoiceStatus = useCallback(
     async (next: "FINALIZE" | "POST" | "REOPEN") => {
+      if (!canManageSales) {
+        Alert.alert(
+          x("Role restricted", "रोल अनुमति नहीं"),
+          x("Only ADMIN or MANAGER can update invoice lifecycle.", "इनवॉइस स्टेटस सिर्फ ADMIN या MANAGER अपडेट कर सकता है।")
+        );
+        return;
+      }
+      if (next === "REOPEN" && !isAdmin) {
+        Alert.alert(
+          x("Admin required", "एडमिन जरूरी"),
+          x("Only ADMIN can reopen finalized/posted invoices.", "फाइनल या पोस्टेड इनवॉइस केवल ADMIN रीओपन कर सकता है।")
+        );
+        return;
+      }
       const customerIdToLoad = subscriptionInvoiceCustomerId.trim();
       if (!customerIdToLoad) {
         Alert.alert(
@@ -446,6 +460,8 @@ export default function SalesScreen() {
       }
     },
     [
+      canManageSales,
+      isAdmin,
       loadMonthStatement,
       loadSubscriptionInvoice,
       statementMonth,
