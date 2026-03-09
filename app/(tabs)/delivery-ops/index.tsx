@@ -2357,7 +2357,7 @@ export default function DeliveryOpsScreen() {
         </View>
       ) : null}
 
-      {latestClosure ? (
+      {isPrivileged && latestClosure ? (
         <View
           style={{
             marginTop: 12,
@@ -2403,7 +2403,7 @@ export default function DeliveryOpsScreen() {
         </View>
       ) : null}
 
-      {runClosures.length > 0 ? (
+      {isPrivileged && runClosures.length > 0 ? (
         <View
           style={{
             marginTop: 12,
