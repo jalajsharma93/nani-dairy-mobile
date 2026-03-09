@@ -18,7 +18,7 @@ import { DateInput } from "../../../components/date-input";
 
 const STATUS_OPTIONS: AnimalStatus[] = ["LACTATING", "DRY", "SICK", "SOLD"];
 const GROWTH_STAGE_OPTIONS: AnimalGrowthStage[] = ["CALF", "GROWER", "ADULT"];
-const BREED_OPTIONS = ["Gir", "Sahiwal", "Buffalo"] as const;
+const BREED_OPTIONS = ["Gir", "Sahiwal", "Desi", "Jersey", "HF", "Buffalo", "Other"] as const;
 
 type Tone = {
   text: string;

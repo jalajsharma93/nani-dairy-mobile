@@ -286,7 +286,11 @@ const labelMap = {
     breed: {
       Gir: "Gir",
       Sahiwal: "Sahiwal",
+      Desi: "Desi",
+      Jersey: "Jersey",
+      HF: "HF",
       Buffalo: "Buffalo",
+      Other: "Other",
     },
   },
   hi: {
@@ -375,7 +379,11 @@ const labelMap = {
     breed: {
       Gir: "गिर",
       Sahiwal: "साहीवाल",
+      Desi: "देसी",
+      Jersey: "जर्सी",
+      HF: "एचएफ",
       Buffalo: "भैंस",
+      Other: "अन्य",
     },
   },
 } as const;
