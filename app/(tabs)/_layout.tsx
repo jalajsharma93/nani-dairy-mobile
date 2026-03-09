@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Redirect, Tabs, usePathname } from "expo-router";
 import { View } from "react-native";
-import { DairyColors } from "../constants/dairy-theme";
-import { DairyTypography } from "../constants/typography";
-import { useAuth } from "../state/auth";
-import { useI18n } from "../state/i18n";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { DairyTypography } from "@/src/constants/typography";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 
 function tabIcon(
   name: React.ComponentProps<typeof Ionicons>["name"],

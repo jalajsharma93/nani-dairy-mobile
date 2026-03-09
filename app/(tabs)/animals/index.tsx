@@ -2,10 +2,18 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Switch, Text, TextInput, View } from "react-native";
-import { AnimalApi, AnimalGrowthStage, AnimalResponse, AnimalStatus } from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+import {
+  AnimalApi,
+  AnimalGrowthStage,
+  HerdProfitabilityResponse,
+  AnimalResponse,
+  AnimalStatus,
+  ReportApi,
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
+import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
 const STATUS_OPTIONS: AnimalStatus[] = ["LACTATING", "DRY", "SICK", "SOLD"];
@@ -40,6 +48,8 @@ export default function AnimalsScreen() {
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [profitabilityLoading, setProfitabilityLoading] = useState(false);
+  const [herdProfitability, setHerdProfitability] = useState<HerdProfitabilityResponse | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingAnimalId, setEditingAnimalId] = useState<string | null>(null);
   const [lookupTag, setLookupTag] = useState("");
@@ -60,10 +70,30 @@ export default function AnimalsScreen() {
   const [weaningDate, setWeaningDate] = useState("");
   const [weaningWeightKg, setWeaningWeightKg] = useState("");
 
+  const loadHerdProfitability = useCallback(async () => {
+    try {
+      setProfitabilityLoading(true);
+      const report = await ReportApi.herdProfitability({
+        toDate: todayLocalISO(),
+        days: 30,
+        activeOnly: true,
+        limit: 50,
+      });
+      setHerdProfitability(report);
+    } catch (e) {
+      console.error(e);
+      setHerdProfitability(null);
+    } finally {
+      setProfitabilityLoading(false);
+    }
+  }, []);
+
   const loadAnimals = useCallback(async () => {
     try {
       setLoading(true);
-      setAnimals(await AnimalApi.list());
+      const animalRows = await AnimalApi.list();
+      setAnimals(animalRows);
+      void loadHerdProfitability();
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -73,7 +103,7 @@ export default function AnimalsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [x]);
+  }, [loadHerdProfitability, x]);
 
   useEffect(() => {
     loadAnimals();
@@ -286,6 +316,18 @@ export default function AnimalsScreen() {
     return { total, lactating, active };
   }, [animals]);
 
+  const topContributors = useMemo(
+    () => (herdProfitability?.items ?? []).filter((row) => row.estimatedNet > 0).slice(0, 4),
+    [herdProfitability]
+  );
+  const reviewList = useMemo(
+    () =>
+      (herdProfitability?.items ?? [])
+        .filter((row) => row.estimatedNet < 0 || row.cullingReviewSuggested)
+        .slice(0, 4),
+    [herdProfitability]
+  );
+
   const openAnimalDetails = (animalId: string) => {
     router.push(`/animals/${encodeURIComponent(animalId)}`);
   };
@@ -427,6 +469,120 @@ export default function AnimalsScreen() {
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Active", "सक्रिय")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.active}</Text>
               </View>
+            </View>
+
+            <View
+              style={{
+                marginTop: 12,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 12,
+                backgroundColor: DairyColors.surface,
+                padding: 10,
+              }}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                  {x("Herd Profitability (30 days)", "झुंड लाभ (30 दिन)")}
+                </Text>
+                <Pressable
+                  onPress={() => void loadHerdProfitability()}
+                  disabled={profitabilityLoading || animals.length === 0}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 999,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    backgroundColor: profitabilityLoading ? DairyColors.backgroundAlt : DairyColors.surfaceMuted,
+                  }}
+                >
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                    {profitabilityLoading ? x("Loading...", "लोड...") : x("Refresh", "रिफ्रेश")}
+                  </Text>
+                </Pressable>
+              </View>
+              {profitabilityLoading ? (
+                <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+                  {x("Computing per-animal profitability...", "प्रति-जानवर लाभ गणना हो रही है...")}
+                </Text>
+              ) : !herdProfitability || herdProfitability.items.length === 0 ? (
+                <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+                  {x("Add more milk/feed/sales data to see profitability insights.", "लाभ विश्लेषण देखने के लिए दूध/फीड/बिक्री डेटा जोड़ें।")}
+                </Text>
+              ) : (
+                <>
+                  <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+                    {x(
+                      `${herdProfitability.fromDate} to ${herdProfitability.toDate} | Animals ${herdProfitability.totalAnimals} | Net Rs ${herdProfitability.totalEstimatedNet.toFixed(2)} | Review ${herdProfitability.cullingReviewCount}`,
+                      `${herdProfitability.fromDate} से ${herdProfitability.toDate} | जानवर ${herdProfitability.totalAnimals} | नेट Rs ${herdProfitability.totalEstimatedNet.toFixed(2)} | समीक्षा ${herdProfitability.cullingReviewCount}`
+                    )}
+                  </Text>
+                  {topContributors.length > 0 ? (
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={{ color: DairyColors.success, fontWeight: "700" }}>
+                        {x("Top Contributors", "शीर्ष योगदान")}
+                      </Text>
+                      {topContributors.map((row) => (
+                        <Pressable
+                          key={`top-profit-${row.animalId}`}
+                          onPress={() => openAnimalDetails(row.animalId)}
+                          style={{
+                            marginTop: 6,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            backgroundColor: DairyColors.successSoft,
+                            padding: 8,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {row.name?.trim() ? row.name : row.tag}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {x(
+                              `Net ${row.estimatedNet.toFixed(2)} | ROI ${row.roiPercent == null ? "-" : `${row.roiPercent.toFixed(1)}%`} | Avg ${row.avgMilkPerDay.toFixed(2)} L/day`,
+                              `नेट ${row.estimatedNet.toFixed(2)} | ROI ${row.roiPercent == null ? "-" : `${row.roiPercent.toFixed(1)}%`} | औसत ${row.avgMilkPerDay.toFixed(2)} ली/दिन`
+                            )}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {reviewList.length > 0 ? (
+                    <View style={{ marginTop: 10 }}>
+                      <Text style={{ color: DairyColors.warning, fontWeight: "700" }}>
+                        {x("Needs Review", "समीक्षा जरूरी")}
+                      </Text>
+                      {reviewList.map((row) => (
+                        <Pressable
+                          key={`review-profit-${row.animalId}`}
+                          onPress={() => openAnimalDetails(row.animalId)}
+                          style={{
+                            marginTop: 6,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            borderRadius: 10,
+                            backgroundColor: DairyColors.warningSoft,
+                            padding: 8,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {row.name?.trim() ? row.name : row.tag}
+                          </Text>
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {x(
+                              `Net ${row.estimatedNet.toFixed(2)} | ROI ${row.roiPercent == null ? "-" : `${row.roiPercent.toFixed(1)}%`} | Avg ${row.avgMilkPerDay.toFixed(2)} L/day`,
+                              `नेट ${row.estimatedNet.toFixed(2)} | ROI ${row.roiPercent == null ? "-" : `${row.roiPercent.toFixed(1)}%`} | औसत ${row.avgMilkPerDay.toFixed(2)} ली/दिन`
+                            )}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                </>
+              )}
             </View>
 
             {showForm ? (

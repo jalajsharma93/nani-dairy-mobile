@@ -8,6 +8,8 @@ import {
   AuthApi,
   AuthUserResponse,
   FeedManagementApi,
+  FeedInventoryForecastResponse,
+  FeedInventoryForecastItemResponse,
   FeedManagementSummaryResponse,
   FeedMaterialCategory,
   FeedMaterialResponse,
@@ -20,11 +22,11 @@ import {
   FeedSopTaskResponse,
   FeedSopTaskStatus,
   UserRole,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { todayLocalISO } from "../../utils/date";
-import { useI18n } from "../../state/i18n";
-import { useAuth } from "../../state/auth";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { todayLocalISO } from "@/src/utils/date";
+import { useI18n } from "@/src/state/i18n";
+import { useAuth } from "@/src/state/auth";
 import { DateInput } from "../../../components/date-input";
 import {
   flushPendingSyncOperations,
@@ -33,7 +35,7 @@ import {
   queueFeedBulkLogCreate,
   queueFeedLogUpdate,
   shouldQueueForOffline,
-} from "../../utils/offline-sync";
+} from "@/src/utils/offline-sync";
 
 const FEED_TYPES = ["Green Fodder", "Dry Fodder", "Concentrate", "Mineral Mix", "Silage", "Other"];
 const RATION_PHASES: FeedRationPhase[] = ["LACTATING", "PREGNANT", "DRY", "CALF", "SICK_RECOVERY"];
@@ -77,6 +79,7 @@ export default function FeedScreen() {
   const canEditFeed = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
   const canManageFeedManagement = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
   const canUpdateTaskStatus = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
+  const canManageAllFeedTasks = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
   const isAdminFeed = hasAnyRole("ADMIN");
   const isManagerSupervisorFeed = hasAnyRole("MANAGER", "FEED_MANAGER");
   const isWorkerChecklistOnly = hasAnyRole("WORKER") && !canManageFeedManagement;
@@ -119,6 +122,8 @@ export default function FeedScreen() {
 
   const [filterAnimalId, setFilterAnimalId] = useState("");
   const [managementSummary, setManagementSummary] = useState<FeedManagementSummaryResponse | null>(null);
+  const [inventoryForecast, setInventoryForecast] = useState<FeedInventoryForecastResponse | null>(null);
+  const [forecastLookbackDays, setForecastLookbackDays] = useState<30 | 90>(30);
   const [materials, setMaterials] = useState<FeedMaterialResponse[]>([]);
   const [recipes, setRecipes] = useState<FeedRecipeResponse[]>([]);
   const [tasks, setTasks] = useState<FeedSopTaskResponse[]>([]);
@@ -269,14 +274,16 @@ export default function FeedScreen() {
   const loadManagement = async () => {
     try {
       setLoadingManagement(true);
-      const [summaryRes, materialRows, recipeRows, taskRows, userRows] = await Promise.all([
+      const [summaryRes, forecastRes, materialRows, recipeRows, taskRows, userRows] = await Promise.all([
         FeedManagementApi.summary(date),
+        FeedManagementApi.forecast(date, forecastLookbackDays),
         FeedManagementApi.listMaterials(),
         FeedManagementApi.listRecipes({ activeOnly: true }),
         FeedManagementApi.listTasks({ date }),
         canManageFeedManagement ? AuthApi.listAssignableUsers(TASK_ASSIGNEES) : Promise.resolve([] as AuthUserResponse[]),
       ]);
       setManagementSummary(summaryRes);
+      setInventoryForecast(forecastRes);
       setMaterials(materialRows);
       setRecipes(recipeRows);
       setTasks(taskRows);
@@ -303,7 +310,7 @@ export default function FeedScreen() {
     loadData();
     loadManagement();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, filterAnimalId, user?.username, canManageFeedManagement]);
+  }, [date, filterAnimalId, user?.username, canManageFeedManagement, forecastLookbackDays]);
 
   useEffect(() => {
     void refreshPendingSync();
@@ -700,6 +707,14 @@ export default function FeedScreen() {
     if (!canUpdateTaskStatus) {
       return;
     }
+    const task = tasks.find((row) => row.feedTaskId === taskId) ?? null;
+    if (task && !canActOnFeedTask(task)) {
+      Alert.alert(
+        x("Not allowed", "अनुमति नहीं"),
+        x("You can update only your assigned feed tasks.", "आप केवल अपने असाइन किए गए फीड टास्क अपडेट कर सकते हैं।")
+      );
+      return;
+    }
     try {
       await FeedManagementApi.updateTaskStatus(taskId, { status });
       await loadManagement();
@@ -808,6 +823,12 @@ export default function FeedScreen() {
     };
   }, [animalMap, logs]);
 
+  const forecastByMaterialId = useMemo(() => {
+    const map = new Map<string, FeedInventoryForecastItemResponse>();
+    (inventoryForecast?.items ?? []).forEach((row) => map.set(row.feedMaterialId, row));
+    return map;
+  }, [inventoryForecast]);
+
   const usersForSelectedTaskRole = useMemo(
     () =>
       assignableUsers
@@ -866,9 +887,27 @@ export default function FeedScreen() {
     return rows.sort((a, b) => (a.dueTime ?? "").localeCompare(b.dueTime ?? ""));
   }, [isWorkerChecklistOnly, taskFilterAssignee, taskFilterRole, tasks, user?.username]);
 
+  const canActOnFeedTask = useCallback(
+    (task: FeedSopTaskResponse) => {
+      if (!canUpdateTaskStatus || !user) {
+        return false;
+      }
+      if (canManageAllFeedTasks) {
+        return true;
+      }
+      const me = user.username.trim().toLowerCase();
+      const assignee = (task.assignedToUsername ?? "").trim().toLowerCase();
+      if (assignee) {
+        return assignee === me;
+      }
+      return task.assignedRole === user.role;
+    },
+    [canManageAllFeedTasks, canUpdateTaskStatus, user]
+  );
+
   const workerChecklistTasks = useMemo(
-    () => visibleTasks.filter((task) => task.assignedRole === "WORKER"),
-    [visibleTasks]
+    () => visibleTasks.filter((task) => task.assignedRole === "WORKER" && canActOnFeedTask(task)),
+    [canActOnFeedTask, visibleTasks]
   );
 
   const preparationTasks = useMemo(
@@ -1481,6 +1520,89 @@ export default function FeedScreen() {
 
               {!isWorkerChecklistOnly ? (
                 <>
+                  <View
+                    style={{
+                      marginTop: 12,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 12,
+                      backgroundColor: DairyColors.surfaceMuted,
+                      padding: 10,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {x("Inventory Forecast (30/90 day)", "इन्वेंट्री फोरकास्ट (30/90 दिन)")}
+                    </Text>
+                    <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                      {inventoryForecast
+                        ? x(
+                            `Lookback ${inventoryForecast.lookbackDays} days | Daily usage ${inventoryForecast.estimatedDailyConsumptionTotalKg.toFixed(2)} kg`,
+                            `पिछले ${inventoryForecast.lookbackDays} दिन | दैनिक खपत ${inventoryForecast.estimatedDailyConsumptionTotalKg.toFixed(2)} किलो`
+                          )
+                        : loadingManagement
+                          ? x("Forecast loading...", "फोरकास्ट लोड हो रहा है...")
+                          : x("Forecast unavailable.", "फोरकास्ट उपलब्ध नहीं है।")}
+                    </Text>
+
+                    <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                      {[30, 90].map((days) => (
+                        <Pressable
+                          key={`forecast-lookback-${days}`}
+                          onPress={() => setForecastLookbackDays(days as 30 | 90)}
+                          style={{
+                            borderWidth: 1,
+                            borderColor:
+                              forecastLookbackDays === days ? DairyColors.primary : DairyColors.border,
+                            backgroundColor:
+                              forecastLookbackDays === days ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x(`${days} day lookback`, `${days} दिन आधार`)}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+
+                    <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.dangerSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("High Risk", "उच्च जोखिम")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {inventoryForecast ? inventoryForecast.highRiskMaterials : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Medium Risk", "मध्यम जोखिम")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {inventoryForecast ? inventoryForecast.mediumRiskMaterials : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.accentSoft, padding: 8, minWidth: 150 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("30-day Reorder Cost", "30-दिन रीऑर्डर लागत")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {inventoryForecast
+                            ? `Rs ${inventoryForecast.totalRecommendedReorderCost30Days.toFixed(2)}`
+                            : loadingManagement
+                              ? "..."
+                              : "Rs 0.00"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8, minWidth: 150 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("90-day Reorder Cost", "90-दिन रीऑर्डर लागत")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {inventoryForecast
+                            ? `Rs ${inventoryForecast.totalRecommendedReorderCost90Days.toFixed(2)}`
+                            : loadingManagement
+                              ? "..."
+                              : "Rs 0.00"}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
                   <Text style={{ marginTop: 12, color: DairyColors.textSecondary, fontWeight: "700" }}>
                     {x("Raw Material Stock", "कच्चे माल का स्टॉक")}
                   </Text>
@@ -1491,32 +1613,65 @@ export default function FeedScreen() {
                         : x("No raw materials yet.", "अभी कोई कच्चा माल नहीं है।")}
                     </Text>
                   ) : (
-                    materials.slice(0, 12).map((m) => (
-                      <Pressable
-                        key={m.feedMaterialId}
-                        onPress={() => startEditMaterial(m)}
-                        disabled={!canManageFeedManagement}
-                        style={{
-                          marginTop: 8,
-                          borderWidth: 1,
-                          borderColor: m.lowStock ? DairyColors.warning : DairyColors.border,
-                          backgroundColor: m.lowStock ? DairyColors.warningSoft : DairyColors.surfaceMuted,
-                          borderRadius: 10,
-                          padding: 8,
-                        }}
-                      >
-                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{m.materialName}</Text>
-                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                          {materialCategoryLabel(m.category)} | {m.availableQty.toFixed(2)} {unitLabel(m.unit)} |{" "}
-                          {x("Reorder", "रीऑर्डर")} {m.reorderLevelQty.toFixed(2)}
-                        </Text>
-                        {canManageFeedManagement ? (
+                    materials.slice(0, 12).map((m) => {
+                      const forecastRow = forecastByMaterialId.get(m.feedMaterialId);
+                      const riskColor =
+                        forecastRow?.riskLevel === "HIGH"
+                          ? DairyColors.danger
+                          : forecastRow?.riskLevel === "MEDIUM"
+                            ? DairyColors.warning
+                            : DairyColors.success;
+                      return (
+                        <Pressable
+                          key={m.feedMaterialId}
+                          onPress={() => startEditMaterial(m)}
+                          disabled={!canManageFeedManagement}
+                          style={{
+                            marginTop: 8,
+                            borderWidth: 1,
+                            borderColor: m.lowStock ? DairyColors.warning : DairyColors.border,
+                            backgroundColor: m.lowStock ? DairyColors.warningSoft : DairyColors.surfaceMuted,
+                            borderRadius: 10,
+                            padding: 8,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{m.materialName}</Text>
                           <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                            {x("Tap to edit", "एडिट के लिए टैप करें")}
+                            {materialCategoryLabel(m.category)} | {m.availableQty.toFixed(2)} {unitLabel(m.unit)} |{" "}
+                            {x("Reorder", "रीऑर्डर")} {m.reorderLevelQty.toFixed(2)}
                           </Text>
-                        ) : null}
-                      </Pressable>
-                    ))
+                          {forecastRow ? (
+                            <>
+                              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                                {x(
+                                  `Daily use ${forecastRow.estimatedDailyConsumptionQty.toFixed(2)} | Days left ${
+                                    forecastRow.daysOfStockLeft == null ? "-" : forecastRow.daysOfStockLeft.toFixed(1)
+                                  }`,
+                                  `दैनिक खपत ${forecastRow.estimatedDailyConsumptionQty.toFixed(2)} | बचे दिन ${
+                                    forecastRow.daysOfStockLeft == null ? "-" : forecastRow.daysOfStockLeft.toFixed(1)
+                                  }`
+                                )}
+                              </Text>
+                              <Text style={{ marginTop: 2, color: riskColor, fontWeight: "700" }}>
+                                {x(
+                                  `Risk ${forecastRow.riskLevel} | Reorder 30d ${forecastRow.recommendedReorderQty30Days.toFixed(
+                                    2
+                                  )} | 90d ${forecastRow.recommendedReorderQty90Days.toFixed(2)}`,
+                                  `जोखिम ${forecastRow.riskLevel} | रीऑर्डर 30-दिन ${forecastRow.recommendedReorderQty30Days.toFixed(
+                                    2
+                                  )} | 90-दिन ${forecastRow.recommendedReorderQty90Days.toFixed(2)}`
+                                )}
+                              </Text>
+                            </>
+                          ) : null}
+                          {canManageFeedManagement ? (
+                            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                              {x("Tap to edit", "एडिट के लिए टैप करें")}
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })
                   )}
 
                   {canManageFeedManagement ? (
@@ -1962,9 +2117,11 @@ export default function FeedScreen() {
                 ) : (
                   workerChecklistTasks.map((task) => {
                     const done = task.status === "DONE";
+                    const canAct = canActOnFeedTask(task);
                     return (
                       <Pressable
                         key={task.feedTaskId}
+                        disabled={!canAct}
                         onPress={() => updateTaskStatus(task.feedTaskId, done ? "PENDING" : "DONE")}
                         style={{
                           marginTop: 8,
@@ -1976,6 +2133,7 @@ export default function FeedScreen() {
                           flexDirection: "row",
                           alignItems: "center",
                           gap: 10,
+                          opacity: canAct ? 1 : 0.55,
                         }}
                       >
                         <Ionicons
@@ -2157,48 +2315,59 @@ export default function FeedScreen() {
                     </Text>
                   ) : (
                     visibleTasks.map((task) => (
-                      <View
-                        key={task.feedTaskId}
-                        style={{
-                          marginTop: 8,
-                          borderWidth: 1,
-                          borderColor: DairyColors.border,
-                          borderRadius: 10,
-                          padding: 8,
-                          backgroundColor: DairyColors.surfaceMuted,
-                        }}
-                      >
-                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{task.title}</Text>
-                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                          {task.taskDate} | {x("Time", "समय")}: {task.dueTime ?? x("Not set", "सेट नहीं")} | {roleLabel(task.assignedRole)} | {taskPriorityLabel(task.priority)}
-                        </Text>
-                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                          {x("Assigned user", "सौंपा गया यूज़र")}: {task.assignedToUsername ?? x("Unassigned", "अनअसाइन्ड")}
-                          {task.assignedByUsername ? ` | ${x("by", "द्वारा")}: ${task.assignedByUsername}` : ""}
-                        </Text>
-                        {task.details ? (
-                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{task.details}</Text>
-                        ) : null}
-                        <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                          {TASK_STATUSES.map((status) => (
-                            <Pressable
-                              key={status}
-                              disabled={!canUpdateTaskStatus}
-                              onPress={() => updateTaskStatus(task.feedTaskId, status)}
-                              style={{
-                                borderWidth: 1,
-                                borderColor: task.status === status ? DairyColors.primary : DairyColors.border,
-                                backgroundColor: task.status === status ? DairyColors.primarySoft : DairyColors.surface,
-                                borderRadius: 999,
-                                paddingHorizontal: 10,
-                                paddingVertical: 6,
-                              }}
-                            >
-                              <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{taskStatusLabel(status)}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                      </View>
+                      (() => {
+                        const canAct = canActOnFeedTask(task);
+                        return (
+                          <View
+                            key={task.feedTaskId}
+                            style={{
+                              marginTop: 8,
+                              borderWidth: 1,
+                              borderColor: DairyColors.border,
+                              borderRadius: 10,
+                              padding: 8,
+                              backgroundColor: DairyColors.surfaceMuted,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{task.title}</Text>
+                            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                              {task.taskDate} | {x("Time", "समय")}: {task.dueTime ?? x("Not set", "सेट नहीं")} | {roleLabel(task.assignedRole)} | {taskPriorityLabel(task.priority)}
+                            </Text>
+                            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                              {x("Assigned user", "सौंपा गया यूज़र")}: {task.assignedToUsername ?? x("Unassigned", "अनअसाइन्ड")}
+                              {task.assignedByUsername ? ` | ${x("by", "द्वारा")}: ${task.assignedByUsername}` : ""}
+                            </Text>
+                            {task.details ? (
+                              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{task.details}</Text>
+                            ) : null}
+                            <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                              {TASK_STATUSES.map((status) => (
+                                <Pressable
+                                  key={status}
+                                  disabled={!canAct}
+                                  onPress={() => updateTaskStatus(task.feedTaskId, status)}
+                                  style={{
+                                    borderWidth: 1,
+                                    borderColor: task.status === status ? DairyColors.primary : DairyColors.border,
+                                    backgroundColor: task.status === status ? DairyColors.primarySoft : DairyColors.surface,
+                                    borderRadius: 999,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 6,
+                                    opacity: canAct ? 1 : 0.55,
+                                  }}
+                                >
+                                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{taskStatusLabel(status)}</Text>
+                                </Pressable>
+                              ))}
+                            </View>
+                            {!canAct ? (
+                              <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                                {x("Read only: assigned user can update this task.", "केवल असाइन्ड यूज़र यह टास्क अपडेट कर सकता है।")}
+                              </Text>
+                            ) : null}
+                          </View>
+                        );
+                      })()
                     ))
                   )}
 

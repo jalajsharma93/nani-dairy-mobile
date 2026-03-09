@@ -1,9 +1,9 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { DairyColors } from "../../constants/dairy-theme";
-import { AuthApi } from "../../services/api";
-import { AppLanguage, useI18n } from "../../state/i18n";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { AuthApi } from "@/src/services/api";
+import { AppLanguage, useI18n } from "@/src/state/i18n";
 
 const LANGUAGES: AppLanguage[] = ["en", "hi"];
 

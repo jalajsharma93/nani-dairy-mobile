@@ -1,9 +1,9 @@
 import { useRouter } from "expo-router";
 import { Alert, ScrollView, Text, View } from "react-native";
 import { ProfileSettingsCard } from "../../../components/profile-settings-card";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();

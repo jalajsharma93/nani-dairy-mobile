@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AuthApi, AuthUserResponse, setApiAuthToken, UserRole } from "../services/api";
-import { clearPersistedSession, readPersistedSession, writePersistedSession } from "../utils/session-storage";
+import { AuthApi, AuthUserResponse, setApiAuthToken, UserRole } from "@/src/services/api";
+import { clearPersistedSession, readPersistedSession, writePersistedSession } from "@/src/utils/session-storage";
 
 type AuthContextValue = {
   user: AuthUserResponse | null;

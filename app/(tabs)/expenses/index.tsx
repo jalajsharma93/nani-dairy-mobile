@@ -7,17 +7,17 @@ import {
   ExpenseResponse,
   ExpensesSummaryResponse,
   PaymentMode,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { todayLocalISO } from "@/src/utils/date";
 import {
   getPendingSyncSummary,
   PendingSyncSummary,
   queueExpenseSave,
   shouldQueueForOffline,
-} from "../../utils/offline-sync";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+} from "@/src/utils/offline-sync";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 import { DateInput } from "../../../components/date-input";
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [

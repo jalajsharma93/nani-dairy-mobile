@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 
 type ServiceCardProps = {
   title: string;

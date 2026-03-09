@@ -15,11 +15,11 @@ import {
   VaccinationResponse,
   WorklistApi,
   WorklistItemResponse,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useAuth } from "../../state/auth";
-import { shiftIsoDate, todayLocalISO } from "../../utils/date";
-import { useI18n } from "../../state/i18n";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useAuth } from "@/src/state/auth";
+import { shiftIsoDate, todayLocalISO } from "@/src/utils/date";
+import { useI18n } from "@/src/state/i18n";
 import { DateInput } from "../../../components/date-input";
 
 type HealthTab = "VACCINATION" | "DEWORMING";

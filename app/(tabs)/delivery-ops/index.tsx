@@ -22,9 +22,9 @@ import {
   Shift,
   UpdateDeliveryTaskStatusBulkItemPayload,
   UpdateDeliveryTaskStatusPayload,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 import {
   flushPendingSyncOperations,
@@ -33,9 +33,9 @@ import {
   queueDeliveryAddOn,
   queueDeliveryTaskStatus,
   shouldQueueForOffline,
-} from "../../utils/offline-sync";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+} from "@/src/utils/offline-sync";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 
 function routeKey(routeName?: string | null) {
   const route = routeName?.trim();
@@ -97,11 +97,15 @@ const PREVIEW_REASON_LABELS: Record<string, { en: string; hi: string }> = {
   AFTER_END_DATE: { en: "After subscription end date", hi: "समाप्ति तारीख के बाद" },
   PAUSED_UNTIL_DATE: { en: "Subscription paused for date", hi: "तारीख के लिए सब्सक्रिप्शन रुका है" },
   SKIP_DATE: { en: "Marked as skip date", hi: "इस तारीख को स्किप किया गया है" },
+  HOLIDAY_WEEKDAY: { en: "Configured weekly holiday", hi: "सेट किया हुआ साप्ताहिक अवकाश" },
   DAY_NOT_IN_ACTIVE_DAYS: { en: "Day not in active days", hi: "दिन सक्रिय दिनों में नहीं है" },
   LINE_QTY_NOT_POSITIVE: { en: "Line quantity is zero/negative", hi: "लाइन मात्रा शून्य/नकारात्मक है" },
   LINE_UNIT_PRICE_NOT_POSITIVE: { en: "Line price is zero/negative", hi: "लाइन कीमत शून्य/नकारात्मक है" },
   LEGACY_QTY_NOT_POSITIVE: { en: "Legacy quantity is zero/negative", hi: "लीगेसी मात्रा शून्य/नकारात्मक है" },
   LEGACY_UNIT_PRICE_NOT_POSITIVE: { en: "Legacy price is zero/negative", hi: "लीगेसी कीमत शून्य/नकारात्मक है" },
+  TASK_ALREADY_EXISTS_PENDING: { en: "Task already planned", hi: "टास्क पहले से प्लान है" },
+  TASK_ALREADY_EXISTS_DELIVERED: { en: "Task already delivered", hi: "टास्क पहले से डिलीवर है" },
+  TASK_ALREADY_EXISTS_SKIPPED: { en: "Task already marked skipped", hi: "टास्क पहले से स्किप है" },
   UNKNOWN: { en: "Unknown reason", hi: "अज्ञात कारण" },
 };
 
@@ -275,13 +279,8 @@ export default function DeliveryOpsScreen() {
     }
     try {
       setLoading(true);
-      if (isPrivileged) {
-        // Keep today plan in sync with active subscriptions.
-        await DeliveryTaskApi.generateSubscriptions(date).catch((e) => {
-          console.error(e);
-        });
-      }
-      const [taskRows, reconRows, closureRows, stockRes, amBatch, pmBatch] = await Promise.all([
+      let taskRows: DeliveryTaskResponse[] = [];
+      const [initialTaskRows, reconRows, closureRows, stockRes, amBatch, pmBatch] = await Promise.all([
         DeliveryTaskApi.list({ date }),
         DeliveryTaskApi.reconciliation(date),
         DeliveryTaskApi.listRunClosures(date),
@@ -289,6 +288,16 @@ export default function DeliveryOpsScreen() {
         MilkApi.getBatch(date, "AM").catch(() => null),
         MilkApi.getBatch(date, "PM").catch(() => null),
       ]);
+      taskRows = initialTaskRows;
+
+      // If the day has no tasks yet, bootstrap full day plan once (generate + assign + optimize).
+      if (isPrivileged && taskRows.length === 0) {
+        await DeliveryTaskApi.triggerDayPlan(date, true, true).catch((e) => {
+          console.error(e);
+        });
+        taskRows = await DeliveryTaskApi.list({ date }).catch(() => taskRows);
+      }
+
       const ensuredTaskRows = await ensureBaseSubscriptionTasks(taskRows);
       setTasks(ensuredTaskRows);
       setRows(reconRows);
@@ -648,6 +657,53 @@ export default function DeliveryOpsScreen() {
   );
   const runShiftQcStatus = qcByShift[runShift];
 
+  const runStartBlock = useMemo(() => {
+    if (!runRoute) {
+      return {
+        title: x("Missing route", "रूट नहीं चुना"),
+        body: x("Select route before starting run mode.", "रन मोड शुरू करने से पहले रूट चुनें।"),
+      };
+    }
+    if (runTasks.length === 0) {
+      return {
+        title: x("No tasks", "कोई टास्क नहीं"),
+        body: x("No delivery tasks for selected route and shift.", "चुने हुए रूट और शिफ्ट के लिए कोई डिलीवरी टास्क नहीं है।"),
+      };
+    }
+    if (runHasMilkStops && runShiftQcStatus !== "PASS") {
+      return {
+        title: x("QC not ready", "QC तैयार नहीं"),
+        body: x(
+          `${label("shift", runShift)} milk delivery can start only when QC is PASS. Current: ${qcLabel(runShiftQcStatus)}.`,
+          `${label("shift", runShift)} दूध डिलीवरी तभी शुरू होगी जब QC PASS हो। अभी: ${qcLabel(runShiftQcStatus)}।`
+        ),
+      };
+    }
+    if (runMilkDeficitLiters > 0 && !isPrivileged) {
+      return {
+        title: x("Stock not ready", "स्टॉक पर्याप्त नहीं"),
+        body: x(
+          `Pending milk ${runPendingMilkLiters.toFixed(2)} L is higher than available stock ${runAvailableMilkLiters.toFixed(2)} L.`,
+          `रन के लिए लंबित दूध ${runPendingMilkLiters.toFixed(2)} L है, जबकि उपलब्ध स्टॉक ${runAvailableMilkLiters.toFixed(2)} L है।`
+        ),
+      };
+    }
+    return null;
+  }, [
+    isPrivileged,
+    label,
+    runAvailableMilkLiters,
+    runHasMilkStops,
+    runMilkDeficitLiters,
+    runPendingMilkLiters,
+    runRoute,
+    runShift,
+    runShiftQcStatus,
+    runTasks.length,
+    x,
+  ]);
+  const canStartRun = !runActive && !runStartBlock;
+
   const closureActual = useMemo(() => {
     const cash = Number(closureCash);
     const upi = Number(closureUpi);
@@ -825,8 +881,8 @@ export default function DeliveryOpsScreen() {
       Alert.alert(
         x("Plan generated", "प्लान तैयार"),
         x(
-          `Date ${planned.date} | Generated ${planned.generatedTasks} | Auto-assigned ${planned.autoAssignedTasks} | Optimized ${planned.optimizedTasks} | Routes ${planned.optimizedRoutes} | Total ${planned.totalTasks} | Pending ${planned.pendingTasks}`,
-          `तारीख ${planned.date} | जेनरेट ${planned.generatedTasks} | ऑटो-असाइन ${planned.autoAssignedTasks} | ऑप्टिमाइज़ ${planned.optimizedTasks} | रूट ${planned.optimizedRoutes} | कुल ${planned.totalTasks} | बाकी ${planned.pendingTasks}`
+          `Date ${planned.date} | Candidates ${planned.eligibleCandidates} | Existing ${planned.alreadyPlannedCandidates} | Blocked ${planned.blockedCandidates} | Generated ${planned.generatedTasks} | Auto-assigned ${planned.autoAssignedTasks} | Optimized ${planned.optimizedTasks} | Routes ${planned.optimizedRoutes} | Total ${planned.totalTasks} | Pending ${planned.pendingTasks}`,
+          `तारीख ${planned.date} | उम्मीदवार ${planned.eligibleCandidates} | पहले से मौजूद ${planned.alreadyPlannedCandidates} | ब्लॉक ${planned.blockedCandidates} | जेनरेट ${planned.generatedTasks} | ऑटो-असाइन ${planned.autoAssignedTasks} | ऑप्टिमाइज़ ${planned.optimizedTasks} | रूट ${planned.optimizedRoutes} | कुल ${planned.totalTasks} | बाकी ${planned.pendingTasks}`
         )
       );
     } catch (e: any) {
@@ -914,7 +970,25 @@ export default function DeliveryOpsScreen() {
     }
   };
 
+  const canActOnTask = useCallback(
+    (task: DeliveryTaskResponse) => {
+      if (isPrivileged) {
+        return true;
+      }
+      const currentAssignee = (task.assignedToUsername ?? "").trim().toLowerCase();
+      const me = (user?.username ?? "").trim().toLowerCase();
+      if (currentAssignee && me && currentAssignee !== me) {
+        return false;
+      }
+      return true;
+    },
+    [isPrivileged, user?.username]
+  );
+
   const canClaimTask = (task: DeliveryTaskResponse) => {
+    if (!canActOnTask(task)) {
+      return false;
+    }
     const currentAssignee = task.assignedToUsername?.trim();
     return !isPrivileged && !currentAssignee && task.status === "PENDING";
   };
@@ -974,6 +1048,16 @@ export default function DeliveryOpsScreen() {
     status: DeliveryTaskStatus,
     options?: { collectedAmountText?: string; notes?: string | null }
   ) => {
+    if (!canActOnTask(task)) {
+      Alert.alert(
+        x("Task assigned to another user", "टास्क किसी और को असाइन है"),
+        x(
+          `This stop is assigned to ${task.assignedToUsername}. Please claim another task or ask manager to reassign.`,
+          `यह स्टॉप ${task.assignedToUsername} को असाइन है। दूसरा टास्क लें या मैनेजर से रीअसाइन करवाएं।`
+        )
+      );
+      return;
+    }
     const collectedRaw = options?.collectedAmountText?.trim() ?? "";
     let parsedCollectedAmount: number | null = null;
     if (collectedRaw) {
@@ -1016,17 +1100,6 @@ export default function DeliveryOpsScreen() {
     try {
       setSavingTaskId(task.deliveryTaskId);
       const currentAssignee = (task.assignedToUsername ?? "").trim().toLowerCase();
-      const me = (user?.username ?? "").trim().toLowerCase();
-      if (!isPrivileged && currentAssignee && me && currentAssignee !== me) {
-        Alert.alert(
-          x("Task assigned to another user", "टास्क किसी और को असाइन है"),
-          x(
-            `This stop is assigned to ${task.assignedToUsername}. Please claim another task or ask manager to reassign.`,
-            `यह स्टॉप ${task.assignedToUsername} को असाइन है। दूसरा टास्क लें या मैनेजर से रीअसाइन करवाएं।`
-          )
-        );
-        return;
-      }
       if (!currentAssignee && user?.username) {
         await DeliveryTaskApi.assign(task.deliveryTaskId, {
           assignedToUsername: user.username,
@@ -1173,41 +1246,11 @@ export default function DeliveryOpsScreen() {
   };
 
   const startRun = () => {
-    if (!runRoute) {
-      Alert.alert(
-        x("Missing route", "रूट नहीं चुना"),
-        x("Select route before starting run mode.", "रन मोड शुरू करने से पहले रूट चुनें।")
-      );
-      return;
-    }
-    if (runTasks.length === 0) {
-      Alert.alert(
-        x("No tasks", "कोई टास्क नहीं"),
-        x("No delivery tasks for selected route and shift.", "चुने हुए रूट और शिफ्ट के लिए कोई डिलीवरी टास्क नहीं है।")
-      );
-      return;
-    }
-    if (runHasMilkStops && runShiftQcStatus !== "PASS") {
-      Alert.alert(
-        x("QC not ready", "QC तैयार नहीं"),
-        x(
-          `${label("shift", runShift)} milk delivery can start only when QC is PASS. Current: ${qcLabel(runShiftQcStatus)}.`,
-          `${label("shift", runShift)} दूध डिलीवरी तभी शुरू होगी जब QC PASS हो। अभी: ${qcLabel(runShiftQcStatus)}।`
-        )
-      );
+    if (runStartBlock) {
+      Alert.alert(runStartBlock.title, runStartBlock.body);
       return;
     }
     if (runMilkDeficitLiters > 0) {
-      if (!isPrivileged) {
-        Alert.alert(
-          x("Stock not ready", "स्टॉक पर्याप्त नहीं"),
-          x(
-            `Pending milk ${runPendingMilkLiters.toFixed(2)} L is higher than available stock ${runAvailableMilkLiters.toFixed(2)} L.`,
-            `रन के लिए लंबित दूध ${runPendingMilkLiters.toFixed(2)} L है, जबकि उपलब्ध स्टॉक ${runAvailableMilkLiters.toFixed(2)} L है।`
-          )
-        );
-        return;
-      }
       Alert.alert(
         x("Low milk stock", "दूध स्टॉक कम"),
         x(
@@ -1904,9 +1947,10 @@ export default function DeliveryOpsScreen() {
         <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
           <Pressable
             onPress={startRun}
+            disabled={!canStartRun}
             style={{
               borderRadius: 10,
-              backgroundColor: DairyColors.primary,
+              backgroundColor: canStartRun ? DairyColors.primary : DairyColors.textSecondary,
               paddingHorizontal: 12,
               paddingVertical: 8,
             }}
@@ -1930,6 +1974,11 @@ export default function DeliveryOpsScreen() {
             </Pressable>
           ) : null}
         </View>
+        {runStartBlock ? (
+          <Text style={{ marginTop: 8, color: DairyColors.warning, fontWeight: "700" }}>
+            {runStartBlock.body}
+          </Text>
+        ) : null}
 
         <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           <View style={{ flex: 1, minWidth: 110, borderRadius: 10, backgroundColor: DairyColors.surfaceMuted, padding: 8 }}>
@@ -2106,6 +2155,7 @@ export default function DeliveryOpsScreen() {
           {runTasks.map((task) => {
             const tone = statusTone(task.status);
             const sla = slaTone(task);
+            const canAct = canActOnTask(task);
             return (
               <View
                 key={`run-${task.deliveryTaskId}`}
@@ -2166,6 +2216,7 @@ export default function DeliveryOpsScreen() {
                     onChangeText={(value) =>
                       setRunCollectedByTaskId((prev) => ({ ...prev, [task.deliveryTaskId]: value }))
                     }
+                    editable={canAct}
                     placeholder={x("Collected amount", "कलेक्शन राशि")}
                     placeholderTextColor="#99A99A"
                     keyboardType="decimal-pad"
@@ -2176,7 +2227,7 @@ export default function DeliveryOpsScreen() {
                       borderRadius: 10,
                       padding: 10,
                       color: DairyColors.textPrimary,
-                      backgroundColor: DairyColors.surface,
+                      backgroundColor: canAct ? DairyColors.surface : DairyColors.surfaceMuted,
                     }}
                   />
                   <TextInput
@@ -2184,6 +2235,7 @@ export default function DeliveryOpsScreen() {
                     onChangeText={(value) =>
                       setRunNoteByTaskId((prev) => ({ ...prev, [task.deliveryTaskId]: value }))
                     }
+                    editable={canAct}
                     placeholder={x("Note (optional)", "नोट (वैकल्पिक)")}
                     placeholderTextColor="#99A99A"
                     style={{
@@ -2193,7 +2245,7 @@ export default function DeliveryOpsScreen() {
                       borderRadius: 10,
                       padding: 10,
                       color: DairyColors.textPrimary,
-                      backgroundColor: DairyColors.surface,
+                      backgroundColor: canAct ? DairyColors.surface : DairyColors.surfaceMuted,
                     }}
                   />
                 </View>
@@ -2216,7 +2268,7 @@ export default function DeliveryOpsScreen() {
                     </Pressable>
                   ) : null}
                   <Pressable
-                    disabled={taskBusy(task.deliveryTaskId)}
+                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
                     onPress={() =>
                       void updateTaskStatus(task, "DELIVERED", {
                         collectedAmountText: runCollectedByTaskId[task.deliveryTaskId] ?? "",
@@ -2228,12 +2280,13 @@ export default function DeliveryOpsScreen() {
                       backgroundColor: DairyColors.success,
                       paddingHorizontal: 10,
                       paddingVertical: 8,
+                      opacity: canAct ? 1 : 0.55,
                     }}
                   >
                     <Text style={{ color: "white", fontWeight: "800" }}>{x("Delivered", "डिलीवर")}</Text>
                   </Pressable>
                   <Pressable
-                    disabled={taskBusy(task.deliveryTaskId)}
+                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
                     onPress={() =>
                       void updateTaskStatus(task, "SKIPPED", {
                         notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
@@ -2244,12 +2297,13 @@ export default function DeliveryOpsScreen() {
                       backgroundColor: DairyColors.warning,
                       paddingHorizontal: 10,
                       paddingVertical: 8,
+                      opacity: canAct ? 1 : 0.55,
                     }}
                   >
                     <Text style={{ color: "white", fontWeight: "800" }}>{x("Skipped", "स्किप")}</Text>
                   </Pressable>
                   <Pressable
-                    disabled={taskBusy(task.deliveryTaskId)}
+                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
                     onPress={() =>
                       void updateTaskStatus(task, "PENDING", {
                         notes: runNoteByTaskId[task.deliveryTaskId] ?? null,
@@ -2260,11 +2314,17 @@ export default function DeliveryOpsScreen() {
                       backgroundColor: DairyColors.textSecondary,
                       paddingHorizontal: 10,
                       paddingVertical: 8,
+                      opacity: canAct ? 1 : 0.55,
                     }}
                   >
                     <Text style={{ color: "white", fontWeight: "800" }}>{x("Pending", "बाकी")}</Text>
                   </Pressable>
                 </View>
+                {!canAct ? (
+                  <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                    {x("Read only: this stop is assigned to another user.", "रीड-ओनली: यह स्टॉप किसी और यूज़र को असाइन है।")}
+                  </Text>
+                ) : null}
               </View>
             );
           })}
@@ -2639,6 +2699,7 @@ export default function DeliveryOpsScreen() {
             const tone = statusTone(task.status);
             const sla = slaTone(task);
             const productType = task.productType ?? "MILK";
+            const canAct = canActOnTask(task);
             return (
               <View
                 key={task.deliveryTaskId}
@@ -2791,13 +2852,14 @@ export default function DeliveryOpsScreen() {
                     </Pressable>
                   ) : null}
                   <Pressable
-                    disabled={taskBusy(task.deliveryTaskId)}
+                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
                     onPress={() => void updateTaskStatus(task, "DELIVERED")}
                     style={{
                       borderRadius: 10,
                       backgroundColor: DairyColors.success,
                       paddingHorizontal: 10,
                       paddingVertical: 8,
+                      opacity: canAct ? 1 : 0.55,
                     }}
                   >
                     <Text style={{ color: "white", fontWeight: "800" }}>
@@ -2805,30 +2867,37 @@ export default function DeliveryOpsScreen() {
                     </Text>
                   </Pressable>
                   <Pressable
-                    disabled={taskBusy(task.deliveryTaskId)}
+                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
                     onPress={() => void updateTaskStatus(task, "SKIPPED")}
                     style={{
                       borderRadius: 10,
                       backgroundColor: DairyColors.warning,
                       paddingHorizontal: 10,
                       paddingVertical: 8,
+                      opacity: canAct ? 1 : 0.55,
                     }}
                   >
                     <Text style={{ color: "white", fontWeight: "800" }}>{x("Skipped", "स्किप")}</Text>
                   </Pressable>
                   <Pressable
-                    disabled={taskBusy(task.deliveryTaskId)}
+                    disabled={!canAct || taskBusy(task.deliveryTaskId)}
                     onPress={() => void updateTaskStatus(task, "PENDING")}
                     style={{
                       borderRadius: 10,
                       backgroundColor: DairyColors.textSecondary,
                       paddingHorizontal: 10,
                       paddingVertical: 8,
+                      opacity: canAct ? 1 : 0.55,
                     }}
                   >
                     <Text style={{ color: "white", fontWeight: "800" }}>{x("Pending", "बाकी")}</Text>
                   </Pressable>
                 </View>
+                {!canAct ? (
+                  <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                    {x("Read only: this stop is assigned to another user.", "रीड-ओनली: यह स्टॉप किसी और यूज़र को असाइन है।")}
+                  </Text>
+                ) : null}
               </View>
             );
           })}

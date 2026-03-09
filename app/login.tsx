@@ -1,19 +1,36 @@
 import { Redirect } from "expo-router";
 import { useState } from "react";
 import { Alert, Platform, Pressable, Text, TextInput, View } from "react-native";
-import { useAuth } from "./state/auth";
-import { DairyColors } from "./constants/dairy-theme";
-import { useI18n } from "./state/i18n";
-import { API_BASE_URL } from "./services/api";
+import Constants from "expo-constants";
+import { useAuth } from "@/src/state/auth";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useI18n } from "@/src/state/i18n";
+import { API_BASE_URL } from "@/src/services/api";
 
 export default function LoginScreen() {
   const { user, signIn, loginLoading } = useAuth();
   const { t, x } = useI18n();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const hostUri =
+    (Constants.expoConfig as { hostUri?: string } | null)?.hostUri ??
+    (Constants.expoGoConfig as { debuggerHost?: string } | null)?.debuggerHost ??
+    "";
+  const detectedHost = hostUri.split(":")[0]?.trim();
+  const detectedLanApiUrl =
+    detectedHost && detectedHost !== "localhost" && detectedHost !== "127.0.0.1"
+      ? `http://${detectedHost}:8080`
+      : null;
+  const staleIpConfigured =
+    Platform.OS !== "web" &&
+    Boolean(detectedLanApiUrl) &&
+    API_BASE_URL !== detectedLanApiUrl &&
+    !API_BASE_URL.includes("localhost") &&
+    !API_BASE_URL.includes("10.0.2.2");
   const likelyWrongBaseUrl =
     Platform.OS !== "web" &&
-    (API_BASE_URL.includes("localhost") || API_BASE_URL.includes("10.0.2.2"));
+    (API_BASE_URL.includes("localhost") || API_BASE_URL.includes("10.0.2.2") || staleIpConfigured);
+  const suggestedApiUrl = detectedLanApiUrl ?? "http://<YOUR_LAPTOP_IP>:8080";
 
   if (user) {
     return <Redirect href="/" />;
@@ -56,8 +73,8 @@ export default function LoginScreen() {
       {likelyWrongBaseUrl ? (
         <Text style={{ marginTop: 6, color: DairyColors.warning }}>
           {x(
-            "If using a real phone, set EXPO_PUBLIC_API_BASE_URL to your laptop IP (e.g. http://192.168.1.153:8080).",
-            "अगर असली फोन पर चला रहे हैं, EXPO_PUBLIC_API_BASE_URL में लैपटॉप का IP दें (जैसे http://192.168.1.153:8080)।"
+            `If using a real phone, set EXPO_PUBLIC_API_BASE_URL to your laptop IP (e.g. ${suggestedApiUrl}).`,
+            `अगर असली फोन पर चला रहे हैं, EXPO_PUBLIC_API_BASE_URL में लैपटॉप का IP दें (जैसे ${suggestedApiUrl})।`
           )}
         </Text>
       ) : null}

@@ -1,18 +1,16 @@
 # NANI Dairy Task Backlog
 
-Last updated: March 5, 2026.
+Last updated: March 9, 2026.
 
-## In Progress
-- [ ] Phase 2.1: Subscription billing depth
+## Completed Phase 2 Core
+- [x] Phase 2.1: Subscription billing depth
   - [x] Proration on plan change/start/stop
   - [x] Holiday/skip billing rules
   - [x] Monthly statement generation
-  - [ ] Invoice-ready API payloads
-
-## Next Queue
-- [ ] Phase 2.2: Per-animal profitability analytics
-- [ ] Phase 2.3: Inventory forecasting (30/90 day)
-- [ ] Phase 2.4: Task automation (recurring, escalation, reminders)
+  - [x] Invoice-ready API payloads
+- [x] Phase 2.2: Per-animal profitability analytics
+- [x] Phase 2.3: Inventory forecasting (30/90 day)
+- [x] Phase 2.4: Task automation (recurring templates, escalation, reminders, manual run + summary)
 
 ## Partial Modules To Close
 - [ ] Fine-grained action-level role policies

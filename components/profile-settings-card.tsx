@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, Text, View } from "react-native";
-import { DairyColors } from "../app/constants/dairy-theme";
+import { DairyColors } from "@/src/constants/dairy-theme";
 
 type ProfileSettingsCardProps = {
   title: string;

@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useI18n } from "../../state/i18n";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useI18n } from "@/src/state/i18n";
 import {
   clearAllPendingSyncOperations,
   clearConflictSyncOperations,
@@ -15,7 +15,7 @@ import {
   removePendingSyncOperation,
   requeueConflictSyncOperations,
   requeueDeadLetterSyncOperations,
-} from "../../utils/offline-sync";
+} from "@/src/utils/offline-sync";
 
 function stateTone(state: "PENDING" | "DEAD_LETTER" | "CONFLICT") {
   if (state === "DEAD_LETTER") {

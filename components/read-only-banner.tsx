@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Text, View } from "react-native";
-import { DairyColors } from "../app/constants/dairy-theme";
-import { useI18n } from "../app/state/i18n";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useI18n } from "@/src/state/i18n";
 
 type ReadOnlyBannerProps = {
   subtitle?: string;

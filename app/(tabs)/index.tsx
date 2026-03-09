@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
-import { DairyColors } from "../constants/dairy-theme";
+import { DairyColors } from "@/src/constants/dairy-theme";
 import {
   DeliveryChecklistItemResponse,
   CustomerLedgerRowResponse,
@@ -21,10 +21,10 @@ import {
   SalesSummaryResponse,
   WeeklyTrendPointResponse,
   WeeklyTrendResponse,
-} from "../services/api";
-import { shiftIsoDate, shortWeekLabel, todayLocalISO } from "../utils/date";
-import { useI18n } from "../state/i18n";
-import { useAuth } from "../state/auth";
+} from "@/src/services/api";
+import { shiftIsoDate, shortWeekLabel, todayLocalISO } from "@/src/utils/date";
+import { useI18n } from "@/src/state/i18n";
+import { useAuth } from "@/src/state/auth";
 
 type StatusTone = {
   background: string;

@@ -106,6 +106,11 @@ export type MilkBatchQcEvaluationResponse = {
   highTemperatureHoldCount: number;
   lactometerOutOfRangeHoldCount: number;
   badSmellHoldCount: number;
+  abnormalColorHoldCount: number;
+  highAcidityHoldCount: number;
+  waterAdulterationRejectCount: number;
+  antibioticResidueRejectCount: number;
+  highBacterialCountHoldCount: number;
   explicitRejectCount: number;
   triggerCodes: string[];
 };
@@ -334,6 +339,12 @@ export type MilkEntryResponse = {
   lactometer?: number | null;
   smellNotes?: string | null;
   rejectionReason?: string | null;
+  colorObservation?: string | null;
+  acidity?: number | null;
+  waterAdulteration?: boolean | null;
+  antibioticResidue?: boolean | null;
+  bacterialCount?: number | null;
+  labTestAttachmentUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -359,6 +370,12 @@ export type UpdateMilkEntriesQcPayload = {
     lactometer?: number | null;
     smellNotes?: string | null;
     rejectionReason?: string | null;
+    colorObservation?: string | null;
+    acidity?: number | null;
+    waterAdulteration?: boolean | null;
+    antibioticResidue?: boolean | null;
+    bacterialCount?: number | null;
+    labTestAttachmentUrl?: string | null;
   }[];
 };
 
@@ -386,6 +403,72 @@ export type WeeklyTrendResponse = {
   startDate: string;
   endDate: string;
   points: WeeklyTrendPointResponse[];
+};
+
+export type AnimalProfitabilityResponse = {
+  animalId: string;
+  fromDate: string;
+  toDate: string;
+  windowDays: number;
+  avgMilkPrice: number;
+  animalMilkLiters: number;
+  totalMilkLiters: number;
+  avgMilkPerDay: number;
+  animalFeedKg: number;
+  animalTreatmentCount: number;
+  estimatedRevenue: number;
+  estimatedFeedCost: number;
+  estimatedTreatmentCost: number;
+  estimatedLaborCost: number;
+  estimatedTotalCost: number;
+  estimatedNet: number;
+  roiPercent?: number | null;
+  feedCostPerKg: number;
+  treatmentCostPerCase: number;
+  laborCostPerLiter: number;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  cullingReviewSuggested: boolean;
+  recommendation: string;
+  warnings: string[];
+};
+
+export type HerdProfitabilityItemResponse = {
+  animalId: string;
+  tag: string;
+  name?: string | null;
+  breed: string;
+  status: AnimalStatus;
+  active: boolean;
+  animalMilkLiters: number;
+  avgMilkPerDay: number;
+  animalFeedKg: number;
+  animalTreatmentCount: number;
+  estimatedRevenue: number;
+  estimatedFeedCost: number;
+  estimatedTreatmentCost: number;
+  estimatedLaborCost: number;
+  estimatedTotalCost: number;
+  estimatedNet: number;
+  roiPercent?: number | null;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  cullingReviewSuggested: boolean;
+  recommendation: string;
+  warnings: string[];
+};
+
+export type HerdProfitabilityResponse = {
+  fromDate: string;
+  toDate: string;
+  windowDays: number;
+  totalAnimals: number;
+  positiveAnimals: number;
+  negativeAnimals: number;
+  cullingReviewCount: number;
+  totalEstimatedRevenue: number;
+  totalEstimatedCost: number;
+  totalEstimatedNet: number;
+  avgRoiPercent?: number | null;
+  items: HerdProfitabilityItemResponse[];
 };
 
 export type SaleResponse = {
@@ -661,6 +744,9 @@ export type SubscriptionGenerationPreviewResponse = {
 export type DeliveryDayPlanTriggerResponse = {
   date: string;
   generatedTasks: number;
+  eligibleCandidates: number;
+  alreadyPlannedCandidates: number;
+  blockedCandidates: number;
   autoAssignedTasks: number;
   optimizedTasks: number;
   optimizedRoutes: number;
@@ -710,6 +796,7 @@ export type CustomerRecordResponse = {
   subscriptionFrequency?: SubscriptionFrequency | null;
   subscriptionPausedUntil?: string | null;
   subscriptionSkipDatesCsv?: string | null;
+  subscriptionHolidayWeekdaysCsv?: string | null;
   runningBalance: number;
   totalPaid: number;
   lastPayoutDate?: string | null;
@@ -731,6 +818,7 @@ export type CreateCustomerRecordPayload = {
   subscriptionFrequency?: SubscriptionFrequency | null;
   subscriptionPausedUntil?: string | null;
   subscriptionSkipDatesCsv?: string | null;
+  subscriptionHolidayWeekdaysCsv?: string | null;
   defaultMilkUnitPrice?: number | null;
   isActive?: boolean;
   notes?: string | null;
@@ -845,6 +933,10 @@ export type CustomerSubscriptionStatementDailyRowResponse = {
   status: string;
   expectedQty: number;
   expectedAmount: number;
+  billedQty: number;
+  billedAmount: number;
+  varianceQty: number;
+  varianceAmount: number;
 };
 
 export type CustomerSubscriptionStatementResponse = {
@@ -860,6 +952,7 @@ export type CustomerSubscriptionStatementResponse = {
   activePlanDays: number;
   pausedDays: number;
   skipDays: number;
+  holidayWeekdayDays: number;
   billedDays: number;
   prorationFactor: number;
   baselinePlanQty: number;
@@ -898,6 +991,14 @@ export type CustomerSubscriptionInvoiceResponse = {
   invoiceNumber: string;
   issueDate: string;
   dueDate: string;
+  status: "DRAFT" | "FINALIZED" | "POSTED";
+  statusNote?: string | null;
+  lastStatusUpdatedAt?: string | null;
+  lastStatusUpdatedBy?: string | null;
+  finalizedAt?: string | null;
+  finalizedBy?: string | null;
+  postedAt?: string | null;
+  postedBy?: string | null;
   subscriptionActive: boolean;
   pricingMode: string;
   prorationFactor: number;
@@ -929,6 +1030,8 @@ export type CustomerSubscriptionInvoiceSummaryResponse = {
   routeName?: string | null;
   month: string;
   invoiceNumber: string;
+  status: "DRAFT" | "FINALIZED" | "POSTED";
+  lastStatusUpdatedAt?: string | null;
   issueDate: string;
   dueDate: string;
   plannedAmount: number;
@@ -941,6 +1044,45 @@ export type CustomerSubscriptionInvoiceSummaryResponse = {
   addOnBilledAmount: number;
   underDeliveryCreditAmount: number;
   prorationFactor: number;
+};
+
+export type CustomerSubscriptionStatementSummaryResponse = {
+  customerId: string;
+  customerName: string;
+  customerType: CustomerType;
+  routeName?: string | null;
+  month: string;
+  pricingMode: string;
+  prorationFactor: number;
+  activePlanDays: number;
+  pausedDays: number;
+  skipDays: number;
+  holidayWeekdayDays: number;
+  billedDays: number;
+  plannedAmount: number;
+  billedAmount: number;
+  receivedAmount: number;
+  pendingAmount: number;
+  expectedVsBilledVariance: number;
+  currentRunningBalance: number;
+};
+
+export type UpdateSubscriptionInvoiceStatusPayload = {
+  customerId: string;
+  month: string;
+  note?: string | null;
+  overrideReason?: string | null;
+};
+
+export type SubscriptionInvoiceStatusUpdateResponse = {
+  customerId: string;
+  month: string;
+  invoiceNumber: string;
+  previousStatus: "DRAFT" | "FINALIZED" | "POSTED";
+  currentStatus: "DRAFT" | "FINALIZED" | "POSTED";
+  statusNote?: string | null;
+  updatedAt: string;
+  updatedBy: string;
 };
 
 export type SettlementReconciliationRowResponse = {
@@ -1151,6 +1293,43 @@ export type FeedManagementSummaryResponse = {
   openTasks: number;
   doneTasksToday: number;
   totalInventoryValue: number;
+};
+
+export type FeedInventoryForecastItemResponse = {
+  feedMaterialId: string;
+  materialName: string;
+  category: FeedMaterialCategory;
+  unit: FeedMaterialUnit;
+  availableQty: number;
+  reorderLevelQty: number;
+  costPerUnit?: number | null;
+  lowStock: boolean;
+  estimatedDailyConsumptionQty: number;
+  daysOfStockLeft?: number | null;
+  requiredQty30Days: number;
+  requiredQty90Days: number;
+  recommendedReorderQty30Days: number;
+  recommendedReorderQty90Days: number;
+  projectedStockAfter30Days: number;
+  projectedStockAfter90Days: number;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  recommendation: string;
+  forecastBasis: "LOG_BASED" | "REORDER_LEVEL_ONLY";
+};
+
+export type FeedInventoryForecastResponse = {
+  date: string;
+  lookbackDays: number;
+  feedLogsCount: number;
+  estimatedDailyConsumptionTotalKg: number;
+  highRiskMaterials: number;
+  mediumRiskMaterials: number;
+  lowRiskMaterials: number;
+  totalRecommendedReorderQty30Days: number;
+  totalRecommendedReorderQty90Days: number;
+  totalRecommendedReorderCost30Days: number;
+  totalRecommendedReorderCost90Days: number;
+  items: FeedInventoryForecastItemResponse[];
 };
 
 export type ProcessingStockStage = "MILK" | "CURD" | "BUTTERMILK" | "GHEE";
@@ -1407,6 +1586,9 @@ export type GenericTaskResponse = {
   sourceRefId?: string | null;
   completedAt?: string | null;
   completedBy?: string | null;
+  reminderSentAt?: string | null;
+  escalatedAt?: string | null;
+  escalationCount?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -1434,6 +1616,76 @@ export type UpdateGenericTaskPayload = {
   status: GenericTaskStatus;
   dueTime?: string | null;
   sourceRefId?: string | null;
+};
+
+export type GenericTaskTemplateFrequency = "DAILY" | "WEEKLY";
+
+export type GenericTaskTemplateResponse = {
+  taskTemplateId: string;
+  title: string;
+  details?: string | null;
+  taskType: GenericTaskType;
+  assignedRole: UserRole;
+  assignedToUsername?: string | null;
+  priority: GenericTaskPriority;
+  dueTime?: string | null;
+  frequency: GenericTaskTemplateFrequency;
+  daysOfWeek: string[];
+  startDate: string;
+  endDate?: string | null;
+  active: boolean;
+  reminderLeadMinutes?: number | null;
+  reminderRepeatMinutes?: number | null;
+  escalationDelayMinutes?: number | null;
+  escalateToRole?: UserRole | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CreateGenericTaskTemplatePayload = {
+  title: string;
+  details?: string | null;
+  taskType?: GenericTaskType;
+  assignedRole?: UserRole;
+  assignedToUsername?: string | null;
+  priority?: GenericTaskPriority;
+  dueTime?: string | null;
+  frequency?: GenericTaskTemplateFrequency;
+  daysOfWeek?: string[];
+  startDate?: string | null;
+  endDate?: string | null;
+  active?: boolean;
+  reminderLeadMinutes?: number | null;
+  reminderRepeatMinutes?: number | null;
+  escalationDelayMinutes?: number | null;
+  escalateToRole?: UserRole | null;
+};
+
+export type UpdateGenericTaskTemplatePayload = CreateGenericTaskTemplatePayload;
+
+export type TaskAutomationReminderResponse = {
+  taskId: string;
+  taskDate: string;
+  title: string;
+  taskType: GenericTaskType;
+  status: GenericTaskStatus;
+  priority: GenericTaskPriority;
+  dueTime?: string | null;
+  assignedRole: UserRole;
+  assignedToUsername?: string | null;
+  message: string;
+  reminderAt: string;
+};
+
+export type TaskAutomationRunResponse = {
+  date: string;
+  executedAt: string;
+  processedTemplates: number;
+  generatedTasks: number;
+  updatedTasks: number;
+  escalatedTasks: number;
+  remindersTriggered: number;
+  reminders: TaskAutomationReminderResponse[];
 };
 
 export type AuthUserResponse = {
@@ -1914,6 +2166,30 @@ export const ReportApi = {
 
   weekly: (date: string, days = 7) =>
     http<WeeklyTrendResponse>(`${API_BASE_URL}/api/reports/weekly?date=${date}&days=${days}`),
+
+  animalProfitability: (animalId: string, toDate: string, days = 30) =>
+    http<AnimalProfitabilityResponse>(
+      `${API_BASE_URL}/api/reports/animals/${encodeURIComponent(animalId)}/profitability?toDate=${encodeURIComponent(
+        toDate
+      )}&days=${days}`
+    ),
+
+  herdProfitability: (params?: {
+    toDate?: string;
+    days?: number;
+    activeOnly?: boolean;
+    status?: AnimalStatus;
+    limit?: number;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.toDate) search.set("toDate", params.toDate);
+    if (params?.days != null) search.set("days", String(params.days));
+    if (params?.activeOnly != null) search.set("activeOnly", String(params.activeOnly));
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return http<HerdProfitabilityResponse>(`${API_BASE_URL}/api/reports/animals/profitability${query ? `?${query}` : ""}`);
+  },
 };
 
 export const SalesApi = {
@@ -1986,6 +2262,52 @@ export const SalesApi = {
       `${API_BASE_URL}/api/sales/subscription-invoices${query ? `?${query}` : ""}`
     );
   },
+
+  subscriptionStatements: (params?: {
+    month?: string;
+    customerType?: CustomerType;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.month) search.set("month", params.month);
+    if (params?.customerType) search.set("customerType", params.customerType);
+    const query = search.toString();
+    return http<CustomerSubscriptionStatementSummaryResponse[]>(
+      `${API_BASE_URL}/api/sales/subscription-statements${query ? `?${query}` : ""}`
+    );
+  },
+
+  exportSubscriptionStatementsCsv: (params?: {
+    month?: string;
+    customerType?: CustomerType;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.month) search.set("month", params.month);
+    if (params?.customerType) search.set("customerType", params.customerType);
+    const query = search.toString();
+    return httpText(`${API_BASE_URL}/api/sales/subscription-statements/export${query ? `?${query}` : ""}`, {
+      headers: {
+        Accept: "text/csv",
+      },
+    });
+  },
+
+  finalizeSubscriptionInvoice: (payload: UpdateSubscriptionInvoiceStatusPayload) =>
+    http<SubscriptionInvoiceStatusUpdateResponse>(`${API_BASE_URL}/api/sales/subscription-invoice/finalize`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  postSubscriptionInvoice: (payload: UpdateSubscriptionInvoiceStatusPayload) =>
+    http<SubscriptionInvoiceStatusUpdateResponse>(`${API_BASE_URL}/api/sales/subscription-invoice/post`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  reopenSubscriptionInvoice: (payload: UpdateSubscriptionInvoiceStatusPayload) =>
+    http<SubscriptionInvoiceStatusUpdateResponse>(`${API_BASE_URL}/api/sales/subscription-invoice/reopen`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   overrideAudits: (dateFrom: string, dateTo?: string) =>
     http<SaleOverrideAuditResponse[]>(
@@ -2252,6 +2574,11 @@ export const FeedManagementApi = {
   summary: (date: string) =>
     http<FeedManagementSummaryResponse>(`${API_BASE_URL}/api/feed-management/summary?date=${date}`),
 
+  forecast: (date: string, lookbackDays = 30) =>
+    http<FeedInventoryForecastResponse>(
+      `${API_BASE_URL}/api/feed-management/forecast?date=${encodeURIComponent(date)}&lookbackDays=${lookbackDays}`
+    ),
+
   listMaterials: (params?: { lowStockOnly?: boolean }) => {
     const search = new URLSearchParams();
     if (params?.lowStockOnly !== undefined) {
@@ -2408,6 +2735,42 @@ export const TaskApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  listTemplates: (activeOnly?: boolean) => {
+    const search = new URLSearchParams();
+    if (activeOnly !== undefined) search.set("activeOnly", String(activeOnly));
+    const query = search.toString();
+    return http<GenericTaskTemplateResponse[]>(
+      `${API_BASE_URL}/api/task-templates${query ? `?${query}` : ""}`
+    );
+  },
+
+  createTemplate: (payload: CreateGenericTaskTemplatePayload) =>
+    http<GenericTaskTemplateResponse>(`${API_BASE_URL}/api/task-templates`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateTemplate: (taskTemplateId: string, payload: UpdateGenericTaskTemplatePayload) =>
+    http<GenericTaskTemplateResponse>(
+      `${API_BASE_URL}/api/task-templates/${encodeURIComponent(taskTemplateId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  runAutomation: (date?: string, dryRun = false) => {
+    const search = new URLSearchParams();
+    if (date) search.set("date", date);
+    search.set("dryRun", String(dryRun));
+    return http<TaskAutomationRunResponse>(
+      `${API_BASE_URL}/api/task-automation/run?${search.toString()}`,
+      {
+        method: "POST",
+      }
+    );
+  },
 };
 
 export const HealthApi = {

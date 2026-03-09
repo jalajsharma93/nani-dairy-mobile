@@ -3,16 +3,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import {
   FeedManagementApi,
+  FeedInventoryForecastItemResponse,
+  FeedInventoryForecastResponse,
   FeedMaterialResponse,
   ProcessingStockStage,
   ProcessingStockSummaryResponse,
   ProcessingStockTxnResponse,
   StockManagerApi,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useI18n } from "../../state/i18n";
-import { useAuth } from "../../state/auth";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useI18n } from "@/src/state/i18n";
+import { useAuth } from "@/src/state/auth";
+import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
 const STAGES: ProcessingStockStage[] = ["MILK", "CURD", "BUTTERMILK", "GHEE"];
@@ -31,6 +33,8 @@ export default function StockManagerScreen() {
   const [summary, setSummary] = useState<ProcessingStockSummaryResponse | null>(null);
   const [transactions, setTransactions] = useState<ProcessingStockTxnResponse[]>([]);
   const [rawMaterials, setRawMaterials] = useState<FeedMaterialResponse[]>([]);
+  const [inventoryForecast, setInventoryForecast] = useState<FeedInventoryForecastResponse | null>(null);
+  const [forecastLookbackDays, setForecastLookbackDays] = useState<30 | 90>(30);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -68,14 +72,16 @@ export default function StockManagerScreen() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [summaryRes, txnRows, materials] = await Promise.all([
+      const [summaryRes, txnRows, materials, forecastRes] = await Promise.all([
         StockManagerApi.summary(date),
         StockManagerApi.listTransactions({ date }),
         FeedManagementApi.listMaterials(),
+        FeedManagementApi.forecast(date, forecastLookbackDays),
       ]);
       setSummary(summaryRes);
       setTransactions(txnRows);
       setRawMaterials(materials);
+      setInventoryForecast(forecastRes);
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -85,7 +91,7 @@ export default function StockManagerScreen() {
     } finally {
       setLoading(false);
     }
-  }, [date, x]);
+  }, [date, forecastLookbackDays, x]);
 
   useEffect(() => {
     void load();
@@ -207,6 +213,17 @@ export default function StockManagerScreen() {
     [summary]
   );
 
+  const forecastByMaterialId = useMemo(() => {
+    const map = new Map<string, FeedInventoryForecastItemResponse>();
+    if (!inventoryForecast) {
+      return map;
+    }
+    inventoryForecast.items.forEach((row) => {
+      map.set(row.feedMaterialId, row);
+    });
+    return map;
+  }, [inventoryForecast]);
+
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
@@ -282,21 +299,88 @@ export default function StockManagerScreen() {
                 padding: 10,
               }}
             >
-              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-                {x("Raw Material Details", "रॉ मटेरियल डिटेल")}
-              </Text>
-              {rawMaterials.length === 0 ? (
-                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
-                  {x("No raw materials found.", "कोई रॉ मटेरियल नहीं मिला।")}
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                  {x("Raw Material Details", "रॉ मटेरियल डिटेल")}
                 </Text>
-              ) : (
-                rawMaterials.slice(0, 12).map((row) => (
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {inventoryForecast
+                    ? x(
+                        `Lookback ${inventoryForecast.lookbackDays} days | Daily usage ${inventoryForecast.estimatedDailyConsumptionTotalKg.toFixed(2)} kg`,
+                        `पिछले ${inventoryForecast.lookbackDays} दिन | दैनिक खपत ${inventoryForecast.estimatedDailyConsumptionTotalKg.toFixed(2)} किलो`
+                      )
+                    : x("Forecast unavailable.", "फोरकास्ट उपलब्ध नहीं है।")}
+                </Text>
+                <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                  {[30, 90].map((days) => (
+                    <Pressable
+                      key={`stock-forecast-lookback-${days}`}
+                      onPress={() => setForecastLookbackDays(days as 30 | 90)}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: forecastLookbackDays === days ? DairyColors.primary : DairyColors.border,
+                        backgroundColor: forecastLookbackDays === days ? DairyColors.primarySoft : DairyColors.surface,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                      }}
+                    >
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                        {x(`${days} day lookback`, `${days} दिन आधार`)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.dangerSoft, padding: 8, minWidth: 110 }}>
+                    <Text style={{ color: DairyColors.textSecondary }}>{x("High Risk", "उच्च जोखिम")}</Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {inventoryForecast ? inventoryForecast.highRiskMaterials : "..."}
+                    </Text>
+                  </View>
+                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 8, minWidth: 110 }}>
+                    <Text style={{ color: DairyColors.textSecondary }}>{x("Medium Risk", "मध्यम जोखिम")}</Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {inventoryForecast ? inventoryForecast.mediumRiskMaterials : "..."}
+                    </Text>
+                  </View>
+                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.accentSoft, padding: 8, minWidth: 140 }}>
+                    <Text style={{ color: DairyColors.textSecondary }}>{x("30-day Cost", "30-दिन लागत")}</Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {inventoryForecast ? `Rs ${inventoryForecast.totalRecommendedReorderCost30Days.toFixed(2)}` : "..."}
+                    </Text>
+                  </View>
+                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8, minWidth: 140 }}>
+                    <Text style={{ color: DairyColors.textSecondary }}>{x("90-day Cost", "90-दिन लागत")}</Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {inventoryForecast ? `Rs ${inventoryForecast.totalRecommendedReorderCost90Days.toFixed(2)}` : "..."}
+                    </Text>
+                  </View>
+                </View>
+                {rawMaterials.length === 0 ? (
+                  <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                    {x("No raw materials found.", "कोई रॉ मटेरियल नहीं मिला।")}
+                  </Text>
+                ) : (
+                rawMaterials.slice(0, 12).map((row) => {
+                  const forecastRow = forecastByMaterialId.get(row.feedMaterialId);
+                  const riskColor =
+                    forecastRow?.riskLevel === "HIGH"
+                      ? DairyColors.danger
+                      : forecastRow?.riskLevel === "MEDIUM"
+                        ? DairyColors.warning
+                        : DairyColors.success;
+                  return (
                   <View
                     key={row.feedMaterialId}
                     style={{
                       marginTop: 6,
                       borderWidth: 1,
-                      borderColor: row.lowStock ? DairyColors.danger : DairyColors.border,
+                      borderColor:
+                        forecastRow?.riskLevel === "HIGH"
+                          ? DairyColors.danger
+                          : row.lowStock
+                            ? DairyColors.warning
+                            : DairyColors.border,
                       borderRadius: 10,
                       backgroundColor: DairyColors.surfaceMuted,
                       padding: 8,
@@ -307,8 +391,33 @@ export default function StockManagerScreen() {
                       {x("Available", "उपलब्ध")}: {row.availableQty.toFixed(2)} {row.unit} | {x("Reorder", "रीऑर्डर")}:{" "}
                       {row.reorderLevelQty.toFixed(2)} {row.unit}
                     </Text>
+                    {forecastRow ? (
+                      <>
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x(
+                            `Daily use ${forecastRow.estimatedDailyConsumptionQty.toFixed(2)} | Days left ${
+                              forecastRow.daysOfStockLeft == null ? "-" : forecastRow.daysOfStockLeft.toFixed(1)
+                            }`,
+                            `दैनिक खपत ${forecastRow.estimatedDailyConsumptionQty.toFixed(2)} | बचे दिन ${
+                              forecastRow.daysOfStockLeft == null ? "-" : forecastRow.daysOfStockLeft.toFixed(1)
+                            }`
+                          )}
+                        </Text>
+                        <Text style={{ marginTop: 2, color: riskColor, fontWeight: "700" }}>
+                          {x(
+                            `Risk ${forecastRow.riskLevel} | Reorder 30d ${forecastRow.recommendedReorderQty30Days.toFixed(
+                              2
+                            )} | 90d ${forecastRow.recommendedReorderQty90Days.toFixed(2)}`,
+                            `जोखिम ${forecastRow.riskLevel} | रीऑर्डर 30-दिन ${forecastRow.recommendedReorderQty30Days.toFixed(
+                              2
+                            )} | 90-दिन ${forecastRow.recommendedReorderQty90Days.toFixed(2)}`
+                          )}
+                        </Text>
+                      </>
+                    ) : null}
                   </View>
-                ))
+                );
+                })
               )}
             </View>
 

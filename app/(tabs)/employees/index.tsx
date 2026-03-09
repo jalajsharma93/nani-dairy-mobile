@@ -14,11 +14,11 @@ import {
   PaymentMode,
   SalaryComputationMode,
   Shift,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
+import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
 const TYPE_OPTIONS: EmployeeType[] = ["FULL_TIME", "PART_TIME"];

@@ -5,51 +5,28 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import {
   AnimalApi,
   AnimalResponse,
-  ExpenseApi,
   FeedApi,
   FeedLogResponse,
   HealthApi,
   MedicalTreatmentResponse,
-  SalesApi,
+  ReportApi,
+  AnimalProfitabilityResponse,
   MilkEntryApi,
   MilkEntryResponse,
   TreatmentApi,
   VaccinationResponse,
   DewormingResponse,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { shiftIsoDate, todayLocalISO } from "../../utils/date";
-import { useI18n } from "../../state/i18n";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { shiftIsoDate, todayLocalISO } from "@/src/utils/date";
+import { useI18n } from "@/src/state/i18n";
 
 const liters = (value: number) => `${value.toFixed(2)} L`;
 const kg = (value: number) => `${value.toFixed(2)} kg`;
 const money = (value: number) => `Rs ${value.toFixed(2)}`;
 
-type AnimalProfitabilityEstimate = {
-  fromDate: string;
-  toDate: string;
-  avgMilkPrice: number;
-  animalMilkLiters: number;
-  animalFeedKg: number;
-  animalTreatmentCount: number;
-  estimatedRevenue: number;
-  estimatedFeedCost: number;
-  estimatedTreatmentCost: number;
-  estimatedTotalCost: number;
-  estimatedNet: number;
-  roiPercent: number | null;
-  feedCostPerKg: number;
-  treatmentCostPerCase: number;
-  confidence: "HIGH" | "MEDIUM" | "LOW";
-  warnings: string[];
-};
-
 function normalizeRef(value?: string | null) {
   return (value ?? "").trim().toLowerCase();
-}
-
-function inIsoRange(value: string, fromDate: string, toDate: string) {
-  return value >= fromDate && value <= toDate;
 }
 
 function statusTone(status?: AnimalResponse["status"]) {
@@ -59,7 +36,7 @@ function statusTone(status?: AnimalResponse["status"]) {
   return { text: DairyColors.info, background: DairyColors.infoSoft };
 }
 
-function confidenceTone(level: AnimalProfitabilityEstimate["confidence"]) {
+function confidenceTone(level: AnimalProfitabilityResponse["confidence"]) {
   if (level === "HIGH") {
     return { text: DairyColors.success, background: DairyColors.successSoft };
   }
@@ -107,142 +84,23 @@ export default function AnimalDetailsScreen() {
   const [showAllMilkHistory, setShowAllMilkHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [profitabilityLoading, setProfitabilityLoading] = useState(false);
-  const [profitability, setProfitability] = useState<AnimalProfitabilityEstimate | null>(null);
+  const [profitability, setProfitability] = useState<AnimalProfitabilityResponse | null>(null);
 
-  const loadProfitability = useCallback(
-    async (prefetched?: { herdAnimals?: AnimalResponse[]; animalMilkRows?: MilkEntryResponse[] }) => {
-      if (!resolvedAnimalId) {
-        return;
-      }
-      const fromDate = shiftIsoDate(today, -29);
-      try {
-        setProfitabilityLoading(true);
-        const [salesRows, expenseRows, feedRows, herdAnimals] = await Promise.all([
-          SalesApi.list(),
-          ExpenseApi.list(),
-          FeedApi.list(),
-          prefetched?.herdAnimals ? Promise.resolve(prefetched.herdAnimals) : AnimalApi.list(),
-        ]);
-
-        const milkRows =
-          prefetched?.animalMilkRows ??
-          (await MilkEntryApi.historyByAnimal(resolvedAnimalId, fromDate, today));
-        const milkRowsInRange = milkRows.filter((row) => inIsoRange(row.date, fromDate, today));
-        const animalMilkLiters = milkRowsInRange.reduce((sum, row) => sum + row.liters, 0);
-
-        const milkSalesInRange = salesRows.filter(
-          (row) =>
-            row.productType === "MILK" &&
-            inIsoRange(row.dispatchDate, fromDate, today) &&
-            Number.isFinite(row.quantity) &&
-            row.quantity > 0
-        );
-        const soldMilkQty = milkSalesInRange.reduce((sum, row) => sum + row.quantity, 0);
-        const soldMilkRevenue = milkSalesInRange.reduce((sum, row) => sum + row.totalAmount, 0);
-        const avgMilkPrice = soldMilkQty > 0 ? soldMilkRevenue / soldMilkQty : 0;
-
-        const expenseInRange = expenseRows.filter((row) => inIsoRange(row.expenseDate, fromDate, today));
-        const feedExpenseTotal = expenseInRange
-          .filter((row) => row.category === "FEED")
-          .reduce((sum, row) => sum + row.amount, 0);
-        const vetExpenseTotal = expenseInRange
-          .filter((row) => row.category === "VETERINARY")
-          .reduce((sum, row) => sum + row.amount, 0);
-
-        const feedRowsInRange = feedRows.filter((row) => inIsoRange(row.feedDate, fromDate, today));
-        const totalFeedKg = feedRowsInRange.reduce((sum, row) => sum + row.quantityKg, 0);
-        const animalFeedKg = feedRowsInRange
-          .filter((row) => row.animalId === resolvedAnimalId)
-          .reduce((sum, row) => sum + row.quantityKg, 0);
-        const feedCostPerKg = totalFeedKg > 0 ? feedExpenseTotal / totalFeedKg : 0;
-        const estimatedFeedCost = animalFeedKg * feedCostPerKg;
-
-        const treatmentCountsByAnimal = await Promise.all(
-          herdAnimals.map(async (row) => {
-            try {
-              const list = await TreatmentApi.list(row.animalId);
-              return {
-                animalId: row.animalId,
-                count: list.filter((item) => inIsoRange(item.treatmentDate, fromDate, today)).length,
-              };
-            } catch {
-              return { animalId: row.animalId, count: 0 };
-            }
-          })
-        );
-
-        const totalTreatmentCount = treatmentCountsByAnimal.reduce((sum, row) => sum + row.count, 0);
-        const animalTreatmentCount =
-          treatmentCountsByAnimal.find((row) => row.animalId === resolvedAnimalId)?.count ?? 0;
-        const treatmentCostPerCase = totalTreatmentCount > 0 ? vetExpenseTotal / totalTreatmentCount : 0;
-        const estimatedTreatmentCost = animalTreatmentCount * treatmentCostPerCase;
-
-        const estimatedRevenue = animalMilkLiters * avgMilkPrice;
-        const estimatedTotalCost = estimatedFeedCost + estimatedTreatmentCost;
-        const estimatedNet = estimatedRevenue - estimatedTotalCost;
-        const roiPercent =
-          estimatedTotalCost > 0 ? (estimatedNet / estimatedTotalCost) * 100 : estimatedRevenue > 0 ? 100 : null;
-
-        const warnings: string[] = [];
-        if (soldMilkQty <= 0) {
-          warnings.push(
-            x(
-              "No milk sale records found in this window; revenue estimate may be low.",
-              "इस अवधि में दूध बिक्री रिकॉर्ड नहीं मिला; आय का अनुमान कम हो सकता है।"
-            )
-          );
-        }
-        if (totalFeedKg <= 0 && feedExpenseTotal > 0) {
-          warnings.push(
-            x(
-              "Feed expense exists but feed quantity logs are missing.",
-              "फीड खर्च है लेकिन फीड मात्रा लॉग उपलब्ध नहीं हैं।"
-            )
-          );
-        }
-        if (totalTreatmentCount <= 0 && vetExpenseTotal > 0) {
-          warnings.push(
-            x(
-              "Veterinary expense exists but treatment records are missing.",
-              "वेट खर्च है लेकिन ट्रीटमेंट रिकॉर्ड उपलब्ध नहीं हैं।"
-            )
-          );
-        }
-
-        const confidence: AnimalProfitabilityEstimate["confidence"] =
-          soldMilkQty > 0 && totalFeedKg > 0 && totalTreatmentCount > 0
-            ? "HIGH"
-            : soldMilkQty > 0 && (totalFeedKg > 0 || totalTreatmentCount > 0)
-              ? "MEDIUM"
-              : "LOW";
-
-        setProfitability({
-          fromDate,
-          toDate: today,
-          avgMilkPrice,
-          animalMilkLiters,
-          animalFeedKg,
-          animalTreatmentCount,
-          estimatedRevenue,
-          estimatedFeedCost,
-          estimatedTreatmentCost,
-          estimatedTotalCost,
-          estimatedNet,
-          roiPercent,
-          feedCostPerKg,
-          treatmentCostPerCase,
-          confidence,
-          warnings,
-        });
-      } catch (e) {
-        console.error(e);
-        setProfitability(null);
-      } finally {
-        setProfitabilityLoading(false);
-      }
-    },
-    [resolvedAnimalId, today, x]
-  );
+  const loadProfitability = useCallback(async () => {
+    if (!resolvedAnimalId) {
+      return;
+    }
+    try {
+      setProfitabilityLoading(true);
+      const analytics = await ReportApi.animalProfitability(resolvedAnimalId, today, 30);
+      setProfitability(analytics);
+    } catch (e) {
+      console.error(e);
+      setProfitability(null);
+    } finally {
+      setProfitabilityLoading(false);
+    }
+  }, [resolvedAnimalId, today]);
 
   const loadData = useCallback(async () => {
     if (!resolvedAnimalId) {
@@ -274,7 +132,7 @@ export default function AnimalDetailsScreen() {
       setVaccinations(vaccRes.status === "fulfilled" ? vaccRes.value : []);
       setDeworming(dewormRes.status === "fulfilled" ? dewormRes.value : []);
       setTreatments(treatmentRes.status === "fulfilled" ? treatmentRes.value : []);
-      void loadProfitability({ herdAnimals, animalMilkRows });
+      void loadProfitability();
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -344,7 +202,7 @@ export default function AnimalDetailsScreen() {
         "यह अनुमान दुग्ध देने वाले जानवरों के लिए सबसे उपयोगी है; इसे जीवनचक्र लागत संदर्भ की तरह देखें।"
       );
     }
-    if (profitability.estimatedNet < 0 && milkSummary.avgPerDay < 5) {
+    if (profitability.cullingReviewSuggested || (profitability.estimatedNet < 0 && profitability.avgMilkPerDay < 5)) {
       return x(
         "Negative contribution with low yield. Review ration and consider culling decision if trend continues.",
         "कम उत्पादन के साथ नुकसान दिख रहा है। राशन समीक्षा करें और ट्रेंड जारी रहे तो culling निर्णय पर विचार करें।"
@@ -356,7 +214,7 @@ export default function AnimalDetailsScreen() {
         "नुकसान दिख रहा है। मार्जिन सुधारने के लिए फीड प्लान, स्वास्थ्य और दूध गुणवत्ता की समीक्षा करें।"
       );
     }
-    if (profitability.estimatedNet > 0 && milkSummary.avgPerDay >= 8) {
+    if (profitability.estimatedNet > 0 && profitability.avgMilkPerDay >= 8) {
       return x(
         "Healthy contribution. Keep current plan and monitor for stability.",
         "अच्छा योगदान दिख रहा है। वर्तमान योजना जारी रखें और स्थिरता मॉनिटर करें।"
@@ -366,7 +224,7 @@ export default function AnimalDetailsScreen() {
       "Contribution is positive but moderate. Track for 2-4 more weeks before major decisions.",
       "योगदान सकारात्मक है लेकिन मध्यम है। बड़े निर्णय से पहले 2-4 सप्ताह और ट्रैक करें।"
     );
-  }, [animal?.status, milkSummary.avgPerDay, profitability, x]);
+  }, [animal?.status, profitability, x]);
 
   const resolveAnimalRef = useCallback(
     (reference?: string | null) => {
@@ -753,6 +611,12 @@ export default function AnimalDetailsScreen() {
               {x(
                 `Treatment ${profitability.animalTreatmentCount} case(s) @ ${money(profitability.treatmentCostPerCase)} = ${money(profitability.estimatedTreatmentCost)}`,
                 `ट्रीटमेंट ${profitability.animalTreatmentCount} केस @ ${money(profitability.treatmentCostPerCase)} = ${money(profitability.estimatedTreatmentCost)}`
+              )}
+            </Text>
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                `Labor ${liters(profitability.animalMilkLiters)} @ ${money(profitability.laborCostPerLiter)}/L = ${money(profitability.estimatedLaborCost)}`,
+                `श्रम ${liters(profitability.animalMilkLiters)} @ ${money(profitability.laborCostPerLiter)}/लीटर = ${money(profitability.estimatedLaborCost)}`
               )}
             </Text>
             <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>

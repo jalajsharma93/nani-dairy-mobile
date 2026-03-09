@@ -1,11 +1,11 @@
 import { Stack } from "expo-router";
 import { useEffect } from "react";
 import { AppState } from "react-native";
-import { DairyColors } from "./constants/dairy-theme";
-import { DairyTypography } from "./constants/typography";
-import { AuthProvider, useAuth } from "./state/auth";
-import { I18nProvider } from "./state/i18n";
-import { flushPendingSyncOperations } from "./utils/offline-sync";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { DairyTypography } from "@/src/constants/typography";
+import { AuthProvider, useAuth } from "@/src/state/auth";
+import { I18nProvider } from "@/src/state/i18n";
+import { flushPendingSyncOperations } from "@/src/utils/offline-sync";
 
 function AutoSyncAgent() {
   const { token, loading } = useAuth();

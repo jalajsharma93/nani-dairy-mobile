@@ -12,11 +12,11 @@ import {
   BreedingPregnancyResult,
   BreedingSummaryResponse,
   CreateBreedingEventPayload,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { todayLocalISO } from "../../utils/date";
-import { useI18n } from "../../state/i18n";
-import { useAuth } from "../../state/auth";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { todayLocalISO } from "@/src/utils/date";
+import { useI18n } from "@/src/state/i18n";
+import { useAuth } from "@/src/state/auth";
 import { DateInput } from "../../../components/date-input";
 
 const PREGNANCY_OPTIONS: BreedingPregnancyResult[] = ["PENDING", "PREGNANT", "NOT_PREGNANT"];

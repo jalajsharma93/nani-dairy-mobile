@@ -22,7 +22,7 @@ import {
   UpdateMilkEntriesQcPayload,
   UpdateFeedLogPayload,
   UpdateDeliveryTaskStatusPayload,
-} from "../services/api";
+} from "@/src/services/api";
 
 type PendingSyncType =
   | "DELIVERY_TASK_STATUS"

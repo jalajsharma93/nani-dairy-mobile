@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, Share, Text, TextInput, View } from "react-native";
 import {
   CreateSalePayload,
   CustomerApi,
@@ -10,6 +10,7 @@ import {
   CustomerRecordResponse,
   CustomerSubscriptionInvoiceResponse,
   CustomerSubscriptionInvoiceSummaryResponse,
+  CustomerSubscriptionStatementSummaryResponse,
   DeliveryChecklistItemResponse,
   CustomerLedgerRowResponse,
   CustomerType,
@@ -24,19 +25,19 @@ import {
   SalesApi,
   SalesSummaryResponse,
   Shift,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
 import { DateInput } from "../../../components/date-input";
-import { shiftIsoDate, todayLocalISO } from "../../utils/date";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+import { shiftIsoDate, todayLocalISO } from "@/src/utils/date";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 import {
   getPendingSyncSummary,
   PendingSyncSummary,
   queueSaleReconcileUpdate,
   queueSaleSave,
   shouldQueueForOffline,
-} from "../../utils/offline-sync";
+} from "@/src/utils/offline-sync";
 
 const CUSTOMER_TYPES: CustomerType[] = ["COOPERATIVE", "RETAIL", "INDIVIDUAL"];
 const PRODUCT_TYPES: ProductType[] = ["MILK", "GHEE", "CURD", "PANEER", "BUTTERMILK", "DUNG", "COMPOST"];
@@ -59,6 +60,16 @@ function paymentTone(status: SaleResponse["paymentStatus"]) {
     return { text: DairyColors.warning, background: DairyColors.warningSoft };
   }
   return { text: DairyColors.danger, background: DairyColors.dangerSoft };
+}
+
+function invoiceStatusTone(status: "DRAFT" | "FINALIZED" | "POSTED") {
+  if (status === "POSTED") {
+    return { text: DairyColors.success, background: DairyColors.successSoft };
+  }
+  if (status === "FINALIZED") {
+    return { text: DairyColors.info, background: DairyColors.infoSoft };
+  }
+  return { text: DairyColors.warning, background: DairyColors.warningSoft };
 }
 
 function toIsoDate(date: Date) {
@@ -86,6 +97,7 @@ export default function SalesScreen() {
   const { hasAnyRole } = useAuth();
   const { x, label } = useI18n();
   const canManageSales = hasAnyRole("ADMIN", "MANAGER");
+  const isAdmin = hasAnyRole("ADMIN");
   const canDeliveryChecklist = hasAnyRole("ADMIN", "MANAGER", "WORKER", "DELIVERY");
   const isDeliveryOnly = canDeliveryChecklist && !canManageSales;
 
@@ -142,11 +154,17 @@ export default function SalesScreen() {
   const [subscriptionInvoiceCustomerId, setSubscriptionInvoiceCustomerId] = useState<string>("");
   const [subscriptionInvoiceIncludeDaily, setSubscriptionInvoiceIncludeDaily] = useState(false);
   const [subscriptionInvoiceLoading, setSubscriptionInvoiceLoading] = useState(false);
+  const [subscriptionInvoiceUpdatingStatus, setSubscriptionInvoiceUpdatingStatus] = useState(false);
+  const [subscriptionInvoiceReopenReason, setSubscriptionInvoiceReopenReason] = useState("");
   const [subscriptionInvoice, setSubscriptionInvoice] = useState<CustomerSubscriptionInvoiceResponse | null>(null);
   const [subscriptionInvoiceSummaries, setSubscriptionInvoiceSummaries] = useState<
     CustomerSubscriptionInvoiceSummaryResponse[]
   >([]);
+  const [subscriptionStatementSummaries, setSubscriptionStatementSummaries] = useState<
+    CustomerSubscriptionStatementSummaryResponse[]
+  >([]);
   const [subscriptionInvoiceSummariesLoading, setSubscriptionInvoiceSummariesLoading] = useState(false);
+  const [subscriptionStatementExporting, setSubscriptionStatementExporting] = useState(false);
   const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
     total: 0,
     deliveryTaskStatus: 0,
@@ -239,6 +257,7 @@ export default function SalesScreen() {
       setStatementRows([]);
       setStatementReconciliationRows([]);
       setSubscriptionInvoiceSummaries([]);
+      setSubscriptionStatementSummaries([]);
       setSubscriptionInvoice(null);
       setStatementBulkPreviewResult(null);
       return;
@@ -247,6 +266,7 @@ export default function SalesScreen() {
       setStatementRows([]);
       setStatementReconciliationRows([]);
       setSubscriptionInvoiceSummaries([]);
+      setSubscriptionStatementSummaries([]);
       setSubscriptionInvoice(null);
       setStatementBulkPreviewResult(null);
       return;
@@ -254,14 +274,16 @@ export default function SalesScreen() {
     try {
       setStatementLoading(true);
       setSubscriptionInvoiceSummariesLoading(true);
-      const [ledger, reconciliation, invoiceSummaries] = await Promise.all([
+      const [ledger, reconciliation, invoiceSummaries, statementSummaries] = await Promise.all([
         SalesApi.ledger(statementRange.from, statementRange.to),
         SalesApi.reconciliation(statementRange.from, statementRange.to),
         SalesApi.subscriptionInvoices({ month: statementMonth.trim() }),
+        SalesApi.subscriptionStatements({ month: statementMonth.trim() }),
       ]);
       setStatementRows(ledger);
       setStatementReconciliationRows(reconciliation);
       setSubscriptionInvoiceSummaries(invoiceSummaries);
+      setSubscriptionStatementSummaries(statementSummaries);
       setStatementBulkPreviewResult(null);
       setStatementPayoutByCustomer((prev) => {
         const next = { ...prev };
@@ -284,6 +306,50 @@ export default function SalesScreen() {
       setSubscriptionInvoiceSummariesLoading(false);
     }
   }, [canManageSales, statementMonth, statementRange, statementKey, x]);
+
+  const exportSubscriptionStatementsCsv = useCallback(async () => {
+    if (!canManageSales) {
+      return;
+    }
+    const monthText = statementMonth.trim();
+    if (!ISO_MONTH_REGEX.test(monthText)) {
+      Alert.alert(
+        x("Invalid month", "गलत महीना"),
+        x("Use month format YYYY-MM.", "महीना YYYY-MM फॉर्मेट में डालें।")
+      );
+      return;
+    }
+
+    try {
+      setSubscriptionStatementExporting(true);
+      const csv = await SalesApi.exportSubscriptionStatementsCsv({ month: monthText });
+      const fileName = `subscription-statements-${monthText}.csv`;
+      if (Platform.OS === "web" && typeof document !== "undefined") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } else {
+        await Share.share({
+          title: fileName,
+          message: csv,
+        });
+      }
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Export failed", "एक्सपोर्ट नहीं हुआ"),
+        e?.message ?? x("Could not export subscription statement CSV.", "सब्सक्रिप्शन स्टेटमेंट CSV एक्सपोर्ट नहीं हुआ।")
+      );
+    } finally {
+      setSubscriptionStatementExporting(false);
+    }
+  }, [canManageSales, statementMonth, x]);
 
   const loadSubscriptionInvoice = useCallback(async () => {
     if (!canManageSales) {
@@ -323,6 +389,71 @@ export default function SalesScreen() {
       setSubscriptionInvoiceLoading(false);
     }
   }, [canManageSales, statementMonth, subscriptionInvoiceCustomerId, subscriptionInvoiceIncludeDaily, x]);
+
+  const updateSubscriptionInvoiceStatus = useCallback(
+    async (next: "FINALIZE" | "POST" | "REOPEN") => {
+      const customerIdToLoad = subscriptionInvoiceCustomerId.trim();
+      if (!customerIdToLoad) {
+        Alert.alert(
+          x("Select customer", "ग्राहक चुनें"),
+          x("Select a subscription customer first.", "पहले एक सब्सक्रिप्शन ग्राहक चुनें।")
+        );
+        return;
+      }
+      if (!ISO_MONTH_REGEX.test(statementMonth.trim())) {
+        Alert.alert(
+          x("Invalid month", "गलत महीना"),
+          x("Use month format YYYY-MM.", "महीना YYYY-MM फॉर्मेट में डालें।")
+        );
+        return;
+      }
+      if (next === "REOPEN" && !subscriptionInvoiceReopenReason.trim()) {
+        Alert.alert(
+          x("Reason required", "कारण जरूरी"),
+          x("Provide override reason to reopen invoice.", "इनवॉइस रीओपन करने के लिए कारण भरें।")
+        );
+        return;
+      }
+      try {
+        setSubscriptionInvoiceUpdatingStatus(true);
+        const payload = {
+          customerId: customerIdToLoad,
+          month: statementMonth.trim(),
+          note: null as string | null,
+          overrideReason: null as string | null,
+        };
+        if (next === "REOPEN") {
+          payload.overrideReason = subscriptionInvoiceReopenReason.trim();
+          payload.note = x("Reopened by admin override", "एडमिन ओवरराइड से रीओपन");
+          await SalesApi.reopenSubscriptionInvoice(payload);
+          setSubscriptionInvoiceReopenReason("");
+        } else if (next === "POST") {
+          payload.note = x("Posted for month close", "महीना बंद करने के लिए पोस्ट किया गया");
+          await SalesApi.postSubscriptionInvoice(payload);
+        } else {
+          payload.note = x("Finalized for review", "रिव्यू के लिए फाइनल किया गया");
+          await SalesApi.finalizeSubscriptionInvoice(payload);
+        }
+        await Promise.all([loadSubscriptionInvoice(), loadMonthStatement()]);
+      } catch (e: any) {
+        console.error(e);
+        Alert.alert(
+          x("Update failed", "अपडेट नहीं हुआ"),
+          e?.message ?? x("Could not update invoice status.", "इनवॉइस स्टेटस अपडेट नहीं हुआ।")
+        );
+      } finally {
+        setSubscriptionInvoiceUpdatingStatus(false);
+      }
+    },
+    [
+      loadMonthStatement,
+      loadSubscriptionInvoice,
+      statementMonth,
+      subscriptionInvoiceCustomerId,
+      subscriptionInvoiceReopenReason,
+      x,
+    ]
+  );
 
   const loadSales = useCallback(async () => {
     if (!canManageSales) {
@@ -2129,15 +2260,50 @@ export default function SalesScreen() {
                   padding: 10,
                 }}
               >
-                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-                  {subscriptionInvoice.invoiceNumber}
-                </Text>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                    {subscriptionInvoice.invoiceNumber}
+                  </Text>
+                  <View
+                    style={{
+                      borderRadius: 999,
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      backgroundColor: invoiceStatusTone(subscriptionInvoice.status).background,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight: "800",
+                        color: invoiceStatusTone(subscriptionInvoice.status).text,
+                      }}
+                    >
+                      {subscriptionInvoice.status}
+                    </Text>
+                  </View>
+                </View>
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(
                     `Issue ${subscriptionInvoice.issueDate} | Due ${subscriptionInvoice.dueDate} | Proration ${subscriptionInvoice.prorationFactor}`,
                     `जारी ${subscriptionInvoice.issueDate} | देय ${subscriptionInvoice.dueDate} | प्रोरेशन ${subscriptionInvoice.prorationFactor}`
                   )}
                 </Text>
+                {subscriptionInvoice.lastStatusUpdatedAt ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Status updated by ${subscriptionInvoice.lastStatusUpdatedBy ?? "unknown"} at ${subscriptionInvoice.lastStatusUpdatedAt}`,
+                      `स्टेटस अपडेट ${subscriptionInvoice.lastStatusUpdatedBy ?? "unknown"} द्वारा ${subscriptionInvoice.lastStatusUpdatedAt}`
+                    )}
+                  </Text>
+                ) : null}
+                {subscriptionInvoice.statusNote ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Status note: ${subscriptionInvoice.statusNote}`,
+                      `स्टेटस नोट: ${subscriptionInvoice.statusNote}`
+                    )}
+                  </Text>
+                ) : null}
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(
                     `Opening ${amount(subscriptionInvoice.openingPendingAmount)} | Closing ${amount(subscriptionInvoice.closingPendingAmount)} | Running ${amount(subscriptionInvoice.currentRunningBalance)}`,
@@ -2156,6 +2322,81 @@ export default function SalesScreen() {
                     `हॉलिडे क्रेडिट ${amount(subscriptionInvoice.holidayCreditAmount)} | ऐड-ऑन ${amount(subscriptionInvoice.addOnBilledAmount)} | कम डिलीवरी क्रेडिट ${amount(subscriptionInvoice.underDeliveryCreditAmount)}`
                   )}
                 </Text>
+
+                <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                  <Pressable
+                    disabled={subscriptionInvoiceUpdatingStatus || subscriptionInvoice.status !== "DRAFT"}
+                    onPress={() => void updateSubscriptionInvoiceStatus("FINALIZE")}
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      alignItems: "center",
+                      backgroundColor:
+                        subscriptionInvoiceUpdatingStatus || subscriptionInvoice.status !== "DRAFT"
+                          ? DairyColors.textSecondary
+                          : DairyColors.info,
+                    }}
+                  >
+                    <Text style={{ color: "white", fontWeight: "800" }}>
+                      {x("Finalize", "फाइनल करें")}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={subscriptionInvoiceUpdatingStatus || subscriptionInvoice.status !== "FINALIZED"}
+                    onPress={() => void updateSubscriptionInvoiceStatus("POST")}
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      alignItems: "center",
+                      backgroundColor:
+                        subscriptionInvoiceUpdatingStatus || subscriptionInvoice.status !== "FINALIZED"
+                          ? DairyColors.textSecondary
+                          : DairyColors.primary,
+                    }}
+                  >
+                    <Text style={{ color: "white", fontWeight: "800" }}>
+                      {x("Post", "पोस्ट करें")}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={subscriptionInvoiceUpdatingStatus || !isAdmin || subscriptionInvoice.status === "DRAFT"}
+                    onPress={() => void updateSubscriptionInvoiceStatus("REOPEN")}
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      alignItems: "center",
+                      backgroundColor:
+                        subscriptionInvoiceUpdatingStatus || !isAdmin || subscriptionInvoice.status === "DRAFT"
+                          ? DairyColors.textSecondary
+                          : DairyColors.warning,
+                    }}
+                  >
+                    <Text style={{ color: "white", fontWeight: "800" }}>
+                      {x("Reopen (Admin)", "रीओपन (एडमिन)")}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {isAdmin && subscriptionInvoice.status !== "DRAFT" ? (
+                  <TextInput
+                    value={subscriptionInvoiceReopenReason}
+                    onChangeText={setSubscriptionInvoiceReopenReason}
+                    placeholder={x("Reopen reason (required for admin reopen)", "रीओपन कारण (एडमिन के लिए जरूरी)")}
+                    placeholderTextColor="#99A99A"
+                    style={{
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 10,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surfaceMuted,
+                    }}
+                  />
+                ) : null}
 
                 {subscriptionInvoice.invoiceLineItems.length > 0 ? (
                   <View style={{ marginTop: 8 }}>
@@ -2201,13 +2442,90 @@ export default function SalesScreen() {
                       padding: 8,
                     }}
                   >
-                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-                      {`${row.customerName} (${row.invoiceNumber})`}
-                    </Text>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                        {`${row.customerName} (${row.invoiceNumber})`}
+                      </Text>
+                      <View
+                        style={{
+                          borderRadius: 999,
+                          paddingHorizontal: 8,
+                          paddingVertical: 3,
+                          backgroundColor: invoiceStatusTone(row.status).background,
+                        }}
+                      >
+                        <Text style={{ color: invoiceStatusTone(row.status).text, fontWeight: "700" }}>{row.status}</Text>
+                      </View>
+                    </View>
                     <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                       {x(
                         `Billed ${amount(row.billedAmount)} | Received ${amount(row.receivedAmount)} | Pending ${amount(row.pendingAmount)} | Closing ${amount(row.closingPendingAmount)}`,
                         `बिल ${amount(row.billedAmount)} | मिला ${amount(row.receivedAmount)} | बाकी ${amount(row.pendingAmount)} | क्लोजिंग ${amount(row.closingPendingAmount)}`
+                      )}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </View>
+
+            <View style={{ marginTop: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700", flex: 1 }}>
+                  {x("Monthly subscription statement summary", "मासिक सब्सक्रिप्शन स्टेटमेंट सारांश")}
+                </Text>
+                <Pressable
+                  disabled={subscriptionStatementExporting || subscriptionInvoiceSummariesLoading}
+                  onPress={() => void exportSubscriptionStatementsCsv()}
+                  style={{
+                    borderRadius: 8,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    backgroundColor:
+                      subscriptionStatementExporting || subscriptionInvoiceSummariesLoading
+                        ? DairyColors.textSecondary
+                        : DairyColors.info,
+                  }}
+                >
+                  <Text style={{ color: "white", fontWeight: "700" }}>
+                    {subscriptionStatementExporting
+                      ? x("Exporting...", "एक्सपोर्ट...")
+                      : x("Export CSV", "CSV एक्सपोर्ट")}
+                  </Text>
+                </Pressable>
+              </View>
+              {subscriptionInvoiceSummariesLoading ? (
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>{x("Loading...", "लोड...")}</Text>
+              ) : subscriptionStatementSummaries.length === 0 ? (
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x("No subscription statement rows for selected month.", "चुने हुए महीने के लिए कोई स्टेटमेंट रिकॉर्ड नहीं है।")}
+                </Text>
+              ) : (
+                subscriptionStatementSummaries.slice(0, 12).map((row) => (
+                  <View
+                    key={`statement-summary-${row.customerId}`}
+                    style={{
+                      marginTop: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      backgroundColor: DairyColors.surface,
+                      padding: 8,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                      {row.customerName}
+                      {row.routeName ? ` | ${row.routeName}` : ""}
+                    </Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                      {x(
+                        `Planned ${amount(row.plannedAmount)} | Billed ${amount(row.billedAmount)} | Pending ${amount(row.pendingAmount)} | Variance ${amount(row.expectedVsBilledVariance)}`,
+                        `प्लान ${amount(row.plannedAmount)} | बिल ${amount(row.billedAmount)} | बाकी ${amount(row.pendingAmount)} | अंतर ${amount(row.expectedVsBilledVariance)}`
+                      )}
+                    </Text>
+                    <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                      {x(
+                        `Proration ${row.prorationFactor} | Active ${row.activePlanDays} | Paused ${row.pausedDays} | Skip ${row.skipDays} | Weekly holiday ${row.holidayWeekdayDays}`,
+                        `प्रोरेशन ${row.prorationFactor} | एक्टिव ${row.activePlanDays} | पॉज़ ${row.pausedDays} | स्किप ${row.skipDays} | साप्ताहिक छुट्टी ${row.holidayWeekdayDays}`
                       )}
                     </Text>
                   </View>

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useState } from "react";
 import { Modal, Pressable, Text, TextInput, View } from "react-native";
-import { DairyColors } from "../app/constants/dairy-theme";
+import { DairyColors } from "@/src/constants/dairy-theme";
 
 type DateInputProps = {
   value: string;

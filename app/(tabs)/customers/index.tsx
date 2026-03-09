@@ -11,11 +11,11 @@ import {
   Shift,
   SubscriptionFrequency,
   UpdateCustomerSubscriptionLinePayload,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
+import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
 const CUSTOMER_TYPES: CustomerType[] = ["COOPERATIVE", "RETAIL", "INDIVIDUAL"];
@@ -91,6 +91,7 @@ export default function CustomersScreen() {
   const [defaultMilkUnitPrice, setDefaultMilkUnitPrice] = useState("");
   const [subscriptionPausedUntil, setSubscriptionPausedUntil] = useState("");
   const [subscriptionSkipDatesCsv, setSubscriptionSkipDatesCsv] = useState("");
+  const [subscriptionHolidayWeekdaysCsv, setSubscriptionHolidayWeekdaysCsv] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [notes, setNotes] = useState("");
   const [payoutAmountByCustomer, setPayoutAmountByCustomer] = useState<Record<string, string>>({});
@@ -355,6 +356,7 @@ export default function CustomersScreen() {
     setDefaultMilkUnitPrice("");
     setSubscriptionPausedUntil("");
     setSubscriptionSkipDatesCsv("");
+    setSubscriptionHolidayWeekdaysCsv("");
     setIsActive(true);
     setNotes("");
     setShowForm(false);
@@ -384,6 +386,7 @@ export default function CustomersScreen() {
     setDefaultMilkUnitPrice(row.defaultMilkUnitPrice == null ? "" : String(row.defaultMilkUnitPrice));
     setSubscriptionPausedUntil(row.subscriptionPausedUntil ?? "");
     setSubscriptionSkipDatesCsv(normalizeSkipDatesCsv(row.subscriptionSkipDatesCsv).join(","));
+    setSubscriptionHolidayWeekdaysCsv(normalizeDaysCsv(row.subscriptionHolidayWeekdaysCsv).join(","));
     setIsActive(row.isActive);
     setNotes(row.notes ?? "");
     setShowForm(true);
@@ -432,6 +435,14 @@ export default function CustomersScreen() {
       );
       return;
     }
+    const normalizedHolidayWeekdays = normalizeDaysCsv(subscriptionHolidayWeekdaysCsv);
+    if (subscriptionHolidayWeekdaysCsv.trim() && normalizedHolidayWeekdays.length === 0) {
+      Alert.alert(
+        x("Invalid value", "गलत मान"),
+        x("Holiday weekdays must be comma-separated days like SUN,MON.", "हॉलिडे दिन SUN,MON जैसे comma-separated दें।")
+      );
+      return;
+    }
     const price = defaultMilkUnitPrice.trim() ? Number(defaultMilkUnitPrice) : null;
     if (price != null && (!Number.isFinite(price) || price <= 0)) {
       Alert.alert(
@@ -454,6 +465,9 @@ export default function CustomersScreen() {
         subscriptionFrequency: subscriptionActive ? subscriptionFrequency : null,
         subscriptionPausedUntil: subscriptionActive ? subscriptionPausedUntil.trim() || null : null,
         subscriptionSkipDatesCsv: subscriptionActive ? normalizedSkipDates.join(",") || null : null,
+        subscriptionHolidayWeekdaysCsv: subscriptionActive
+          ? normalizedHolidayWeekdays.join(",") || null
+          : null,
         defaultMilkUnitPrice: price,
         isActive,
         notes: notes.trim() || null,
@@ -530,6 +544,7 @@ export default function CustomersScreen() {
       overrides?: {
         subscriptionPausedUntil?: string | null;
         subscriptionSkipDatesCsv?: string | null;
+        subscriptionHolidayWeekdaysCsv?: string | null;
         subscriptionActive?: boolean;
       }
     ) => {
@@ -549,6 +564,9 @@ export default function CustomersScreen() {
         subscriptionSkipDatesCsv: nextSubscriptionActive
           ? (overrides?.subscriptionSkipDatesCsv ?? row.subscriptionSkipDatesCsv ?? null) || null
           : null,
+        subscriptionHolidayWeekdaysCsv: nextSubscriptionActive
+          ? (overrides?.subscriptionHolidayWeekdaysCsv ?? row.subscriptionHolidayWeekdaysCsv ?? null) || null
+          : null,
         defaultMilkUnitPrice: row.defaultMilkUnitPrice ?? null,
         isActive: row.isActive,
         notes: row.notes ?? null,
@@ -563,6 +581,7 @@ export default function CustomersScreen() {
       overrides: {
         subscriptionPausedUntil?: string | null;
         subscriptionSkipDatesCsv?: string | null;
+        subscriptionHolidayWeekdaysCsv?: string | null;
         subscriptionActive?: boolean;
       },
       successMessage: { en: string; hi: string }
@@ -1187,6 +1206,24 @@ export default function CustomersScreen() {
                         backgroundColor: DairyColors.surfaceMuted,
                       }}
                     />
+                    <TextInput
+                      value={subscriptionHolidayWeekdaysCsv}
+                      onChangeText={setSubscriptionHolidayWeekdaysCsv}
+                      placeholder={x(
+                        "Weekly holidays CSV (SUN or SUN,MON)",
+                        "साप्ताहिक छुट्टी CSV (SUN या SUN,MON)"
+                      )}
+                      placeholderTextColor="#99A99A"
+                      style={{
+                        marginTop: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        padding: 10,
+                        color: DairyColors.textPrimary,
+                        backgroundColor: DairyColors.surfaceMuted,
+                      }}
+                    />
                   </>
                 ) : null}
 
@@ -1272,6 +1309,7 @@ export default function CustomersScreen() {
         renderItem={({ item }) => {
           const todayIsoDate = todayLocalISO();
           const skipDates = normalizeSkipDatesCsv(item.subscriptionSkipDatesCsv);
+          const holidayWeekdays = normalizeDaysCsv(item.subscriptionHolidayWeekdaysCsv);
           const skipToday = skipDates.includes(todayIsoDate);
           return (
             <View
@@ -1326,6 +1364,14 @@ export default function CustomersScreen() {
               {skipDates.length > 0 ? (
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(`Skip dates: ${skipDates.join(", ")}`, `स्किप तारीखें: ${skipDates.join(", ")}`)}
+                </Text>
+              ) : null}
+              {holidayWeekdays.length > 0 ? (
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Weekly holidays: ${holidayWeekdays.join(", ")}`,
+                    `साप्ताहिक छुट्टियां: ${holidayWeekdays.join(", ")}`
+                  )}
                 </Text>
               ) : null}
               <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>

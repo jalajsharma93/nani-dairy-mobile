@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
-import { DairyColors } from "../../constants/dairy-theme";
+import { DairyColors } from "@/src/constants/dairy-theme";
 import {
   AnimalApi,
   AnimalResponse,
@@ -11,16 +11,16 @@ import {
   MilkBatchResponse,
   MilkEntryApi,
   StockManagerApi,
-} from "../../services/api";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { todayLocalISO } from "@/src/utils/date";
 import {
   flushPendingSyncOperations,
   getPendingSyncSummary,
   PendingSyncSummary,
   queueMilkSaveBatchAndEntries,
   shouldQueueForOffline,
-} from "../../utils/offline-sync";
-import { useI18n } from "../../state/i18n";
+} from "@/src/utils/offline-sync";
+import { useI18n } from "@/src/state/i18n";
 
 type Shift = "AM" | "PM";
 

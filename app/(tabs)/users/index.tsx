@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Redirect } from "expo-router";
 import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
-import { DairyColors } from "../../constants/dairy-theme";
+import { DairyColors } from "@/src/constants/dairy-theme";
 import {
   AuthApi,
   AuthUserAuditResponse,
@@ -9,9 +9,9 @@ import {
   CreateAuthUserPayload,
   UpdateAuthUserPayload,
   UserRole,
-} from "../../services/api";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+} from "@/src/services/api";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 
 const ROLE_OPTIONS: UserRole[] = ["ADMIN", "MANAGER", "WORKER", "FEED_MANAGER", "DELIVERY", "VET"];
 

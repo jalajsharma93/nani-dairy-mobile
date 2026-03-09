@@ -10,18 +10,18 @@ import {
   MilkEntryApi,
   QcStatus,
   Shift,
-} from "../../services/api";
-import { DairyColors } from "../../constants/dairy-theme";
-import { todayLocalISO } from "../../utils/date";
+} from "@/src/services/api";
+import { DairyColors } from "@/src/constants/dairy-theme";
+import { todayLocalISO } from "@/src/utils/date";
 import {
   getPendingSyncSummary,
   PendingSyncSummary,
   queueQcBatchStatusUpdate,
   queueQcCowUpdate,
   shouldQueueForOffline,
-} from "../../utils/offline-sync";
-import { useAuth } from "../../state/auth";
-import { useI18n } from "../../state/i18n";
+} from "@/src/utils/offline-sync";
+import { useAuth } from "@/src/state/auth";
+import { useI18n } from "@/src/state/i18n";
 
 type CowQcStatus = Exclude<QcStatus, "PENDING">;
 type CowQcDraft = {
@@ -32,6 +32,12 @@ type CowQcDraft = {
   lactometer: string;
   smellNotes: string;
   rejectionReason: string;
+  colorObservation: string;
+  acidity: string;
+  waterAdulteration: "YES" | "NO" | "";
+  antibioticResidue: "YES" | "NO" | "";
+  bacterialCount: string;
+  labTestAttachmentUrl: string;
 };
 
 const EMPTY_DRAFT: CowQcDraft = {
@@ -41,6 +47,12 @@ const EMPTY_DRAFT: CowQcDraft = {
   lactometer: "",
   smellNotes: "",
   rejectionReason: "",
+  colorObservation: "",
+  acidity: "",
+  waterAdulteration: "",
+  antibioticResidue: "",
+  bacterialCount: "",
+  labTestAttachmentUrl: "",
 };
 const EMPTY_DRAFTS: Record<string, CowQcDraft> = {};
 
@@ -76,7 +88,7 @@ function parseOptionalNumber(value: string, labelName: string): number | null {
   if (!trimmed) {
     return null;
   }
-  const parsed = Number(trimmed);
+  const parsed = Number(trimmed.replace(",", "."));
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new Error(`${labelName} must be a valid non-negative number`);
   }
@@ -165,6 +177,14 @@ export default function QualityCheckScreen() {
           lactometer: entry.lactometer == null ? "" : String(entry.lactometer),
           smellNotes: entry.smellNotes ?? "",
           rejectionReason: entry.rejectionReason ?? "",
+          colorObservation: entry.colorObservation ?? "",
+          acidity: entry.acidity == null ? "" : String(entry.acidity),
+          waterAdulteration:
+            entry.waterAdulteration == null ? "" : entry.waterAdulteration ? "YES" : "NO",
+          antibioticResidue:
+            entry.antibioticResidue == null ? "" : entry.antibioticResidue ? "YES" : "NO",
+          bacterialCount: entry.bacterialCount == null ? "" : String(entry.bacterialCount),
+          labTestAttachmentUrl: entry.labTestAttachmentUrl ?? "",
         };
       }
 
@@ -223,6 +243,53 @@ export default function QualityCheckScreen() {
   const step1Saved = !!step1SavedByBatch[batchKey];
   const step1Progress = progressPercent(reviewedCount, animals.length);
 
+  const buildStep1Entries = useCallback(() => {
+    return animals.flatMap((animal) => {
+      const d = drafts[animal.animalId] ?? EMPTY_DRAFT;
+      const hasMetrics =
+        !!d.fat.trim() ||
+        !!d.snf.trim() ||
+        !!d.temperature.trim() ||
+        !!d.lactometer.trim() ||
+        !!d.smellNotes.trim() ||
+        !!d.rejectionReason.trim() ||
+        !!d.colorObservation.trim() ||
+        !!d.acidity.trim() ||
+        !!d.bacterialCount.trim() ||
+        !!d.labTestAttachmentUrl.trim() ||
+        d.waterAdulteration !== "" ||
+        d.antibioticResidue !== "";
+      const effectiveStatus = d.qcStatus ?? (hasMetrics ? "HOLD" : undefined);
+      if (!effectiveStatus) {
+        return [];
+      }
+      const rejectionReason = d.rejectionReason.trim();
+      if (effectiveStatus === "REJECT" && !rejectionReason) {
+        throw new Error(`Rejection reason is required for ${animal.tag}`);
+      }
+      return [
+        {
+          animalId: animal.animalId,
+          qcStatus: effectiveStatus as QcStatus,
+          fat: parseOptionalNumber(d.fat, "Fat"),
+          snf: parseOptionalNumber(d.snf, "SNF"),
+          temperature: parseOptionalNumber(d.temperature, "Temperature"),
+          lactometer: parseOptionalNumber(d.lactometer, "Lactometer"),
+          smellNotes: d.smellNotes.trim() || null,
+          rejectionReason: rejectionReason || null,
+          colorObservation: d.colorObservation.trim() || null,
+          acidity: parseOptionalNumber(d.acidity, "Acidity"),
+          waterAdulteration:
+            d.waterAdulteration === "" ? null : d.waterAdulteration === "YES",
+          antibioticResidue:
+            d.antibioticResidue === "" ? null : d.antibioticResidue === "YES",
+          bacterialCount: parseOptionalNumber(d.bacterialCount, "Bacterial Count"),
+          labTestAttachmentUrl: d.labTestAttachmentUrl.trim() || null,
+        },
+      ];
+    });
+  }, [animals, drafts]);
+
   const recommendedOverall: CowQcStatus | null = useMemo(() => {
     if (!anyCowReviewed) return null;
     const statuses = animals
@@ -261,43 +328,46 @@ export default function QualityCheckScreen() {
       return;
     }
 
+    let entries: {
+      animalId: string;
+      qcStatus: QcStatus;
+      fat?: number | null;
+      snf?: number | null;
+      temperature?: number | null;
+      lactometer?: number | null;
+      smellNotes?: string | null;
+      rejectionReason?: string | null;
+    }[] = [];
+    try {
+      entries = buildStep1Entries();
+    } catch (error: any) {
+      const message = String(error?.message ?? "");
+      if (message.toLowerCase().includes("non-negative number")) {
+        Alert.alert(
+          x("Invalid values", "गलत मान"),
+          x("Fat/SNF/temperature/lactometer must be valid non-negative numbers.", "फैट/SNF/तापमान/लैक्टोमीटर सही non-negative संख्या हों।")
+        );
+      } else if (message.toLowerCase().includes("rejection reason is required")) {
+        Alert.alert(
+          x("Reason required", "कारण जरूरी"),
+          x("Each REJECT cow must include rejection reason.", "हर REJECT गाय के लिए कारण भरना जरूरी है।")
+        );
+      } else {
+        Alert.alert(x("Validation failed", "वैलिडेशन असफल"), message);
+      }
+      return;
+    }
+
+    if (entries.length === 0) {
+      Alert.alert(
+        x("Nothing to save", "सेव करने के लिए कुछ नहीं"),
+        x("Set status or QC details for at least one cow.", "कम से कम एक गाय का स्टेटस या QC विवरण भरें।")
+      );
+      return;
+    }
+
     try {
       setSavingStep1(true);
-      const entries = animals.flatMap((animal) => {
-        const d = drafts[animal.animalId] ?? EMPTY_DRAFT;
-        const hasMetrics =
-          !!d.fat.trim() ||
-          !!d.snf.trim() ||
-          !!d.temperature.trim() ||
-          !!d.lactometer.trim() ||
-          !!d.smellNotes.trim() ||
-          !!d.rejectionReason.trim();
-        const effectiveStatus = d.qcStatus ?? (hasMetrics ? "HOLD" : undefined);
-        if (!effectiveStatus) {
-          return [];
-        }
-        return [
-          {
-            animalId: animal.animalId,
-            qcStatus: effectiveStatus as QcStatus,
-            fat: parseOptionalNumber(d.fat, "Fat"),
-            snf: parseOptionalNumber(d.snf, "SNF"),
-            temperature: parseOptionalNumber(d.temperature, "Temperature"),
-            lactometer: parseOptionalNumber(d.lactometer, "Lactometer"),
-            smellNotes: d.smellNotes.trim() || null,
-            rejectionReason: d.rejectionReason.trim() || null,
-          },
-        ];
-      });
-
-      if (entries.length === 0) {
-        Alert.alert(
-          x("Nothing to save", "सेव करने के लिए कुछ नहीं"),
-          x("Set status or QC details for at least one cow.", "कम से कम एक गाय का स्टेटस या QC विवरण भरें।")
-        );
-        return;
-      }
-
       await MilkEntryApi.updateQc({
         date,
         shift,
@@ -322,6 +392,13 @@ export default function QualityCheckScreen() {
         );
         return;
       }
+      if (message.toLowerCase().includes("rejection reason is required")) {
+        Alert.alert(
+          x("Reason required", "कारण जरूरी"),
+          x("Each REJECT cow must include rejection reason.", "हर REJECT गाय के लिए कारण भरना जरूरी है।")
+        );
+        return;
+      }
       if (message.toLowerCase().includes("locked after qc pass")) {
         Alert.alert(
           x("Locked", "लॉक है"),
@@ -329,32 +406,6 @@ export default function QualityCheckScreen() {
         );
         await loadData();
       } else if (shouldQueueForOffline(e)) {
-        const entries = animals.flatMap((animal) => {
-          const d = drafts[animal.animalId] ?? EMPTY_DRAFT;
-          const hasMetrics =
-            !!d.fat.trim() ||
-            !!d.snf.trim() ||
-            !!d.temperature.trim() ||
-            !!d.lactometer.trim() ||
-            !!d.smellNotes.trim() ||
-            !!d.rejectionReason.trim();
-          const effectiveStatus = d.qcStatus ?? (hasMetrics ? "HOLD" : undefined);
-          if (!effectiveStatus) {
-            return [];
-          }
-          return [
-            {
-              animalId: animal.animalId,
-              qcStatus: effectiveStatus as QcStatus,
-              fat: parseOptionalNumber(d.fat, "Fat"),
-              snf: parseOptionalNumber(d.snf, "SNF"),
-              temperature: parseOptionalNumber(d.temperature, "Temperature"),
-              lactometer: parseOptionalNumber(d.lactometer, "Lactometer"),
-              smellNotes: d.smellNotes.trim() || null,
-              rejectionReason: d.rejectionReason.trim() || null,
-            },
-          ];
-        });
         if (entries.length > 0) {
           await queueQcCowUpdate({ date, shift, entries }, message);
           await refreshPendingSync();
@@ -848,6 +899,173 @@ export default function QualityCheckScreen() {
               value={selectedDraft.smellNotes}
               onChangeText={(v) => setDraft(selectedAnimal.animalId, { smellNotes: v })}
             />
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                {x("Color Observation", "रंग जांच")}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                {[
+                  { key: "NORMAL", labelEn: "Normal", labelHi: "सामान्य" },
+                  { key: "ABNORMAL", labelEn: "Abnormal", labelHi: "असामान्य" },
+                ].map((option) => {
+                  const selected = selectedDraft.colorObservation === option.key;
+                  return (
+                    <Pressable
+                      key={option.key}
+                      disabled={!canEditQc}
+                      onPress={() =>
+                        setDraft(selectedAnimal.animalId, {
+                          colorObservation: selected ? "" : option.key,
+                        })
+                      }
+                      style={{
+                        borderWidth: 1,
+                        borderColor: selected ? DairyColors.primary : DairyColors.border,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                        opacity: canEditQc ? 1 : 0.6,
+                      }}
+                    >
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                        {x(option.labelEn, option.labelHi)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+              <TextInput
+                editable={canEditQc}
+                style={{
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  borderRadius: 10,
+                  padding: 9,
+                  flex: 1,
+                  color: DairyColors.textPrimary,
+                  backgroundColor: DairyColors.surface,
+                }}
+                placeholder={x("Acidity", "अम्लता")}
+                placeholderTextColor="#99A99A"
+                keyboardType="decimal-pad"
+                value={selectedDraft.acidity}
+                onChangeText={(v) => setDraft(selectedAnimal.animalId, { acidity: v })}
+              />
+              <TextInput
+                editable={canEditQc}
+                style={{
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  borderRadius: 10,
+                  padding: 9,
+                  flex: 1,
+                  color: DairyColors.textPrimary,
+                  backgroundColor: DairyColors.surface,
+                }}
+                placeholder={x("Bacterial Count", "बैक्टीरियल काउंट")}
+                placeholderTextColor="#99A99A"
+                keyboardType="decimal-pad"
+                value={selectedDraft.bacterialCount}
+                onChangeText={(v) => setDraft(selectedAnimal.animalId, { bacterialCount: v })}
+              />
+            </View>
+
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                {x("Water Adulteration", "पानी मिलावट")}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                {[
+                  { key: "YES" as const, labelEn: "Detected", labelHi: "मिली" },
+                  { key: "NO" as const, labelEn: "Not Detected", labelHi: "नहीं मिली" },
+                ].map((option) => {
+                  const selected = selectedDraft.waterAdulteration === option.key;
+                  return (
+                    <Pressable
+                      key={`water-${option.key}`}
+                      disabled={!canEditQc}
+                      onPress={() =>
+                        setDraft(selectedAnimal.animalId, {
+                          waterAdulteration: selected ? "" : option.key,
+                        })
+                      }
+                      style={{
+                        borderWidth: 1,
+                        borderColor: selected ? DairyColors.primary : DairyColors.border,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                        opacity: canEditQc ? 1 : 0.6,
+                      }}
+                    >
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                        {x(option.labelEn, option.labelHi)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                {x("Antibiotic Residue", "एंटीबायोटिक अवशेष")}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                {[
+                  { key: "YES" as const, labelEn: "Detected", labelHi: "मिला" },
+                  { key: "NO" as const, labelEn: "Not Detected", labelHi: "नहीं मिला" },
+                ].map((option) => {
+                  const selected = selectedDraft.antibioticResidue === option.key;
+                  return (
+                    <Pressable
+                      key={`abx-${option.key}`}
+                      disabled={!canEditQc}
+                      onPress={() =>
+                        setDraft(selectedAnimal.animalId, {
+                          antibioticResidue: selected ? "" : option.key,
+                        })
+                      }
+                      style={{
+                        borderWidth: 1,
+                        borderColor: selected ? DairyColors.primary : DairyColors.border,
+                        borderRadius: 999,
+                        paddingHorizontal: 12,
+                        paddingVertical: 7,
+                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                        opacity: canEditQc ? 1 : 0.6,
+                      }}
+                    >
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                        {x(option.labelEn, option.labelHi)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <TextInput
+              editable={canEditQc}
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                padding: 9,
+                color: DairyColors.textPrimary,
+                backgroundColor: DairyColors.surface,
+              }}
+              placeholder={x("Lab Report URL (optional)", "लैब रिपोर्ट URL (वैकल्पिक)")}
+              placeholderTextColor="#99A99A"
+              value={selectedDraft.labTestAttachmentUrl}
+              onChangeText={(v) => setDraft(selectedAnimal.animalId, { labTestAttachmentUrl: v })}
+            />
             {selectedDraft.qcStatus === "REJECT" ? (
               <TextInput
                 editable={canEditQc}
@@ -875,14 +1093,14 @@ export default function QualityCheckScreen() {
 
         {canApproveBatch ? (
           <Pressable
-            disabled={!batch || savingStep1 || !allCowsReviewed || batchLocked}
+            disabled={!batch || savingStep1 || !anyCowReviewed || batchLocked}
             onPress={saveStep1}
             style={{
               marginTop: 12,
               padding: 12,
               borderRadius: 10,
               backgroundColor:
-                !batch || !allCowsReviewed || savingStep1 || batchLocked
+                !batch || !anyCowReviewed || savingStep1 || batchLocked
                   ? DairyColors.textSecondary
                   : DairyColors.primary,
               alignItems: "center",
