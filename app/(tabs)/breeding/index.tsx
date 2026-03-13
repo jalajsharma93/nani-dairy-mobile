@@ -9,6 +9,7 @@ import {
   BreedingCalfGender,
   BreedingCalvingOutcome,
   BreedingEventResponse,
+  BreedingKpiSummaryResponse,
   BreedingPregnancyResult,
   BreedingSummaryResponse,
   CreateBreedingEventPayload,
@@ -87,6 +88,40 @@ function numberTone(value: number) {
   return { text: DairyColors.success, background: DairyColors.successSoft };
 }
 
+function metricTone(value: number, goodWhenHigh: boolean) {
+  if (goodWhenHigh) {
+    if (value >= 70) return { text: DairyColors.success, background: DairyColors.successSoft };
+    if (value >= 45) return { text: DairyColors.warning, background: DairyColors.warningSoft };
+    return { text: DairyColors.danger, background: DairyColors.dangerSoft };
+  }
+  if (value <= 2) return { text: DairyColors.success, background: DairyColors.successSoft };
+  if (value <= 4) return { text: DairyColors.warning, background: DairyColors.warningSoft };
+  return { text: DairyColors.danger, background: DairyColors.dangerSoft };
+}
+
+function formatMetric(value: number | null | undefined, digits = 1) {
+  if (value == null || Number.isNaN(value)) {
+    return "-";
+  }
+  return value.toFixed(digits);
+}
+
+function monthLabel(month: string) {
+  const iso = `${month}-01T00:00:00`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return month;
+  }
+  return date.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+}
+
+function barWidthPercent(value: number, max: number) {
+  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(max) || max <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, (value / max) * 100));
+}
+
 function animalDisplayLabel(animal: AnimalResponse) {
   return animal.tag?.trim() || animal.name?.trim() || animal.animalId;
 }
@@ -103,6 +138,7 @@ export default function BreedingScreen() {
   const [selectedAnimalId, setSelectedAnimalId] = useState("");
   const [animalLookup, setAnimalLookup] = useState("");
   const [summary, setSummary] = useState<BreedingSummaryResponse | null>(null);
+  const [kpis, setKpis] = useState<BreedingKpiSummaryResponse | null>(null);
   const [events, setEvents] = useState<BreedingEventResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -169,6 +205,19 @@ export default function BreedingScreen() {
     });
     return counts;
   }, [date, events]);
+
+  const conceptionTrendMax = useMemo(
+    () => Math.max(100, ...(kpis?.conceptionTrend ?? []).map((p) => p.value || 0)),
+    [kpis]
+  );
+  const repeatTrendMax = useMemo(
+    () => Math.max(1, ...(kpis?.repeatBreederTrend ?? []).map((p) => p.value || 0)),
+    [kpis]
+  );
+  const serviceTrendMax = useMemo(
+    () => Math.max(1, ...(kpis?.servicePeriodTrend ?? []).map((p) => p.value || 0)),
+    [kpis]
+  );
 
   const pregnancyLabel = (value: BreedingPregnancyResult) => {
     if (value === "PREGNANT") return x("Pregnant", "गाभिन");
@@ -258,12 +307,14 @@ export default function BreedingScreen() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [animalRows, summaryRes] = await Promise.all([
+      const [animalRows, summaryRes, kpiRes] = await Promise.all([
         AnimalApi.list({ active: true }),
         BreedingApi.summary(date, 7),
+        BreedingApi.kpis(date, 6),
       ]);
       setAnimals(animalRows);
       setSummary(summaryRes);
+      setKpis(kpiRes);
 
       const requestedAnimalId = (params.animalId ?? "").trim().toLowerCase();
       const requestedTag = (params.tag ?? "").trim().toLowerCase();
@@ -425,7 +476,11 @@ export default function BreedingScreen() {
         await BreedingApi.create(selectedAnimalId, payload);
       }
 
-      await Promise.all([loadEvents(selectedAnimalId), BreedingApi.summary(date, 7).then(setSummary)]);
+      await Promise.all([
+        loadEvents(selectedAnimalId),
+        BreedingApi.summary(date, 7).then(setSummary),
+        BreedingApi.kpis(date, 6).then(setKpis),
+      ]);
       resetForm();
       Alert.alert(
         x("Saved", "सेव हो गया"),
@@ -501,7 +556,11 @@ export default function BreedingScreen() {
             try {
               setLoading(true);
               await BreedingApi.delete(row.animalId, row.breedingEventId);
-              await Promise.all([loadEvents(row.animalId), BreedingApi.summary(date, 7).then(setSummary)]);
+              await Promise.all([
+                loadEvents(row.animalId),
+                BreedingApi.summary(date, 7).then(setSummary),
+                BreedingApi.kpis(date, 6).then(setKpis),
+              ]);
             } catch (e: any) {
               console.error(e);
               Alert.alert(
@@ -651,6 +710,208 @@ export default function BreedingScreen() {
             </View>
           );
         })}
+      </View>
+
+      <View
+        style={{
+          marginTop: 12,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 14,
+          backgroundColor: DairyColors.surface,
+          padding: 12,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Breeding KPI Analytics", "प्रजनन KPI एनालिटिक्स")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            "Conception rate, repeat breeder trend and service-period indicators (last 6 months).",
+            "गर्भधारण दर, रीपीट ब्रीडर ट्रेंड और सर्विस पीरियड संकेतक (पिछले 6 महीने)।"
+          )}
+        </Text>
+
+        <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {[
+            {
+              label: x("Conception Rate", "गर्भधारण दर"),
+              value: `${formatMetric(kpis?.conceptionRatePercent ?? 0, 1)}%`,
+              tone: metricTone(kpis?.conceptionRatePercent ?? 0, true),
+              subtitle: x(
+                `${kpis?.pregnantConfirmed ?? 0}/${kpis?.pregnancyChecksTotal ?? 0} checks`,
+                `${kpis?.pregnantConfirmed ?? 0}/${kpis?.pregnancyChecksTotal ?? 0} जांच`
+              ),
+            },
+            {
+              label: x("Repeat Breeder Animals", "रीपीट ब्रीडर जानवर"),
+              value: String(kpis?.repeatBreederAnimals ?? 0),
+              tone: metricTone(kpis?.repeatBreederAnimals ?? 0, false),
+              subtitle: x(
+                `At risk: ${kpis?.repeatBreederAtRiskAnimals ?? 0}`,
+                `जोखिम: ${kpis?.repeatBreederAtRiskAnimals ?? 0}`
+              ),
+            },
+            {
+              label: x("Avg AI->Preg Check Days", "औसत AI->गर्भ जांच दिन"),
+              value: formatMetric(kpis?.avgInseminationToPregCheckDays ?? null, 1),
+              tone: metricTone(kpis?.avgInseminationToPregCheckDays ?? 0, false),
+              subtitle: x("Lower is better", "कम होना बेहतर"),
+            },
+            {
+              label: x("Preg Check Overdue", "गर्भ जांच देरी"),
+              value: String(kpis?.overduePregnancyChecks ?? 0),
+              tone: metricTone(kpis?.overduePregnancyChecks ?? 0, false),
+              subtitle: x(
+                `Pending: ${kpis?.pendingPregnancyChecks ?? 0}`,
+                `पेंडिंग: ${kpis?.pendingPregnancyChecks ?? 0}`
+              ),
+            },
+          ].map((card) => (
+            <View
+              key={card.label}
+              style={{
+                flex: 1,
+                minWidth: 150,
+                borderRadius: 10,
+                padding: 10,
+                backgroundColor: card.tone.background,
+              }}
+            >
+              <Text style={{ color: DairyColors.textSecondary }}>{card.label}</Text>
+              <Text style={{ marginTop: 4, color: card.tone.text, fontWeight: "800", fontSize: 18 }}>
+                {card.value}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{card.subtitle}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View
+          style={{
+            marginTop: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 10,
+            backgroundColor: DairyColors.surfaceMuted,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Conception Trend", "गर्भधारण ट्रेंड")}
+          </Text>
+          {(kpis?.conceptionTrend ?? []).map((point) => (
+            <View key={`conception-${point.month}`} style={{ marginTop: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={{ color: DairyColors.textSecondary }}>{monthLabel(point.month)}</Text>
+                <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {`${formatMetric(point.value, 1)}%`}
+                </Text>
+              </View>
+              <View
+                style={{
+                  marginTop: 4,
+                  height: 8,
+                  borderRadius: 999,
+                  backgroundColor: DairyColors.surface,
+                  overflow: "hidden",
+                }}
+              >
+                <View
+                  style={{
+                    width: `${barWidthPercent(point.value, conceptionTrendMax)}%`,
+                    height: "100%",
+                    backgroundColor: DairyColors.success,
+                  }}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <View
+          style={{
+            marginTop: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 10,
+            backgroundColor: DairyColors.surfaceMuted,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Repeat Breeder Trend", "रीपीट ब्रीडर ट्रेंड")}
+          </Text>
+          {(kpis?.repeatBreederTrend ?? []).map((point) => (
+            <View key={`repeat-${point.month}`} style={{ marginTop: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={{ color: DairyColors.textSecondary }}>{monthLabel(point.month)}</Text>
+                <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {formatMetric(point.value, 0)}
+                </Text>
+              </View>
+              <View
+                style={{
+                  marginTop: 4,
+                  height: 8,
+                  borderRadius: 999,
+                  backgroundColor: DairyColors.surface,
+                  overflow: "hidden",
+                }}
+              >
+                <View
+                  style={{
+                    width: `${barWidthPercent(point.value, repeatTrendMax)}%`,
+                    height: "100%",
+                    backgroundColor: DairyColors.warning,
+                  }}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <View
+          style={{
+            marginTop: 10,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 10,
+            backgroundColor: DairyColors.surfaceMuted,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Service Period Trend (AI->Preg Check Days)", "सर्विस पीरियड ट्रेंड (AI->गर्भ जांच दिन)")}
+          </Text>
+          {(kpis?.servicePeriodTrend ?? []).map((point) => (
+            <View key={`service-${point.month}`} style={{ marginTop: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={{ color: DairyColors.textSecondary }}>{monthLabel(point.month)}</Text>
+                <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {formatMetric(point.value, 1)}
+                </Text>
+              </View>
+              <View
+                style={{
+                  marginTop: 4,
+                  height: 8,
+                  borderRadius: 999,
+                  backgroundColor: DairyColors.surface,
+                  overflow: "hidden",
+                }}
+              >
+                <View
+                  style={{
+                    width: `${barWidthPercent(point.value, serviceTrendMax)}%`,
+                    height: "100%",
+                    backgroundColor: DairyColors.info,
+                  }}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
       </View>
 
       <View

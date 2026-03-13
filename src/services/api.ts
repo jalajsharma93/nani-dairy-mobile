@@ -1570,6 +1570,34 @@ export type BreedingSummaryResponse = {
   openPregnancies: number;
 };
 
+export type BreedingKpiPointResponse = {
+  month: string;
+  value: number;
+  numerator?: number | null;
+  denominator?: number | null;
+};
+
+export type BreedingKpiSummaryResponse = {
+  date: string;
+  trendMonths: number;
+  conceptionRatePercent: number;
+  pregnancyChecksTotal: number;
+  pregnantConfirmed: number;
+  notPregnantConfirmed: number;
+  repeatBreederAnimals: number;
+  repeatBreederAtRiskAnimals: number;
+  repeatBreederFailuresLast365Days: number;
+  pendingPregnancyChecks: number;
+  overduePregnancyChecks: number;
+  dueSoonPregnancyChecks: number;
+  avgHeatToInseminationDays?: number | null;
+  avgInseminationToPregCheckDays?: number | null;
+  avgHeatToPregCheckDays?: number | null;
+  conceptionTrend: BreedingKpiPointResponse[];
+  repeatBreederTrend: BreedingKpiPointResponse[];
+  servicePeriodTrend: BreedingKpiPointResponse[];
+};
+
 export type WorklistTaskType =
   | "VACCINATION_DUE"
   | "DEWORMING_DUE"
@@ -2939,6 +2967,17 @@ export const BreedingApi = {
     http<BreedingSummaryResponse>(
       `${API_BASE_URL}/api/breeding/summary?date=${date}&windowDays=${windowDays}`
     ),
+
+  kpis: (date?: string, trendMonths = 6) => {
+    const search = new URLSearchParams();
+    if (date) {
+      search.set("date", date);
+    }
+    search.set("trendMonths", String(trendMonths));
+    return http<BreedingKpiSummaryResponse>(
+      `${API_BASE_URL}/api/breeding/kpis?${search.toString()}`
+    );
+  },
 
   list: (animalId: string) =>
     http<BreedingEventResponse[]>(
