@@ -115,6 +115,22 @@ export type MilkBatchQcEvaluationResponse = {
   triggerCodes: string[];
 };
 
+export type MilkQcOverrideAuditResponse = {
+  milkQcOverrideAuditId: string;
+  batchDate: string;
+  shift: Shift;
+  requestedQcStatus: QcStatus;
+  recommendedQcStatus: QcStatus;
+  appliedQcStatus: QcStatus;
+  overrideRequested: boolean;
+  overrideApproved: boolean;
+  overrideReason?: string | null;
+  triggerCodesCsv?: string | null;
+  actorUsername?: string | null;
+  actorRole?: string | null;
+  createdAt?: string | null;
+};
+
 export type AnimalResponse = {
   animalId: string;
   tag: string;
@@ -1484,6 +1500,33 @@ export type HealthSummaryResponse = {
   dewormingOverdue: number;
 };
 
+export type HealthProtocolItemResponse = {
+  protocolId: string;
+  code: string;
+  category: string;
+  title: string;
+  description?: string | null;
+  priority: WorklistPriority;
+  dueStatus: WorklistDueStatus;
+  dueDate?: string | null;
+};
+
+export type HealthProtocolResponse = {
+  date: string;
+  windowDays: number;
+  animalId: string;
+  animalTag: string;
+  animalStatus: AnimalStatus;
+  growthStage?: AnimalGrowthStage | null;
+  ageDays?: number | null;
+  ageMonths?: number | null;
+  totalItems: number;
+  highPriorityCount: number;
+  mediumPriorityCount: number;
+  lowPriorityCount: number;
+  items: HealthProtocolItemResponse[];
+};
+
 export type BreedingEventResponse = {
   breedingEventId: string;
   animalId: string;
@@ -1854,6 +1897,20 @@ export const MilkApi = {
     http<MilkBatchQcEvaluationResponse>(
       `${API_BASE_URL}/api/milk-batches/qc-evaluation?date=${date}&shift=${shift}`
     ),
+
+  listQcOverrides: (dateFrom?: string, dateTo?: string) => {
+    const params = new URLSearchParams();
+    if (dateFrom) {
+      params.set("dateFrom", dateFrom);
+    }
+    if (dateTo) {
+      params.set("dateTo", dateTo);
+    }
+    const query = params.toString();
+    return http<MilkQcOverrideAuditResponse[]>(
+      `${API_BASE_URL}/api/milk-batches/qc-overrides${query ? `?${query}` : ""}`
+    );
+  },
 
   saveBatch: (payload: { date: string; shift: Shift; totalLiters: number }) =>
     http<MilkBatchResponse>(`${API_BASE_URL}/api/milk-batches`, {
@@ -2779,6 +2836,15 @@ export const HealthApi = {
       `${API_BASE_URL}/api/health/summary?date=${date}&windowDays=${windowDays}`
     ),
 
+  protocol: (animalId: string, date?: string, windowDays = 7) => {
+    const search = new URLSearchParams();
+    if (date) search.set("date", date);
+    search.set("windowDays", String(windowDays));
+    return http<HealthProtocolResponse>(
+      `${API_BASE_URL}/api/animals/${encodeURIComponent(animalId)}/health-protocol?${search.toString()}`
+    );
+  },
+
   listVaccinations: (animalId: string) =>
     http<VaccinationResponse[]>(`${API_BASE_URL}/api/animals/${animalId}/vaccinations`),
 
@@ -2915,6 +2981,15 @@ export const UploadApi = {
     const form = new FormData();
     form.append("file", payload as any);
     return http<UploadFileResponse>(`${API_BASE_URL}/api/uploads/prescriptions`, {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  uploadQcLab: (payload: UploadFilePayload) => {
+    const form = new FormData();
+    form.append("file", payload as any);
+    return http<UploadFileResponse>(`${API_BASE_URL}/api/uploads/qc-labs`, {
       method: "POST",
       body: form,
     });

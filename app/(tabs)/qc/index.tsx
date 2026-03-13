@@ -1,15 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
+  API_BASE_URL,
   AnimalApi,
   AnimalResponse,
   MilkApi,
   MilkBatchResponse,
   MilkBatchQcEvaluationResponse,
+  MilkQcOverrideAuditResponse,
   MilkEntryApi,
   QcStatus,
   Shift,
+  UploadApi,
 } from "@/src/services/api";
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { todayLocalISO } from "@/src/utils/date";
@@ -37,6 +40,7 @@ type CowQcDraft = {
   waterAdulteration: "YES" | "NO" | "";
   antibioticResidue: "YES" | "NO" | "";
   bacterialCount: string;
+  labUploadUri: string;
   labTestAttachmentUrl: string;
 };
 
@@ -52,6 +56,7 @@ const EMPTY_DRAFT: CowQcDraft = {
   waterAdulteration: "",
   antibioticResidue: "",
   bacterialCount: "",
+  labUploadUri: "",
   labTestAttachmentUrl: "",
 };
 const EMPTY_DRAFTS: Record<string, CowQcDraft> = {};
@@ -95,6 +100,15 @@ function parseOptionalNumber(value: string, labelName: string): number | null {
   return parsed;
 }
 
+function guessMimeType(uri: string) {
+  const normalized = uri.trim().toLowerCase();
+  if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
+  if (normalized.endsWith(".png")) return "image/png";
+  if (normalized.endsWith(".webp")) return "image/webp";
+  if (normalized.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
 export default function QualityCheckScreen() {
   const { hasAnyRole } = useAuth();
   const { x, label } = useI18n();
@@ -106,6 +120,7 @@ export default function QualityCheckScreen() {
 
   const [batch, setBatch] = useState<MilkBatchResponse | null>(null);
   const [evaluation, setEvaluation] = useState<MilkBatchQcEvaluationResponse | null>(null);
+  const [overrideAudits, setOverrideAudits] = useState<MilkQcOverrideAuditResponse[]>([]);
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [selectedAnimalId, setSelectedAnimalId] = useState<string>("");
   const [showAnimalPicker, setShowAnimalPicker] = useState(false);
@@ -114,6 +129,7 @@ export default function QualityCheckScreen() {
   const [step1SavedByBatch, setStep1SavedByBatch] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [savingStep1, setSavingStep1] = useState(false);
+  const [uploadingLab, setUploadingLab] = useState(false);
   const [updating, setUpdating] = useState<QcStatus | "">("");
   const [overrideRecommendedStatus, setOverrideRecommendedStatus] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
@@ -153,16 +169,18 @@ export default function QualityCheckScreen() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [batchRes, evalRes, animalsRes, entryRes] = await Promise.all([
+      const [batchRes, evalRes, animalsRes, entryRes, overrideRows] = await Promise.all([
         MilkApi.getBatch(date, shift),
         MilkApi.getQcEvaluation(date, shift).catch(() => null),
         AnimalApi.list({ active: true, status: "LACTATING" }),
         MilkEntryApi.list(date, shift),
+        canApproveBatch ? MilkApi.listQcOverrides(date, date).catch(() => []) : Promise.resolve([]),
       ]);
 
       setBatch(batchRes);
       setEvaluation(evalRes);
       setAnimals(animalsRes);
+      setOverrideAudits(overrideRows);
       if (animalsRes.length > 0 && !animalsRes.some((a) => a.animalId === selectedAnimalId)) {
         setSelectedAnimalId(animalsRes[0].animalId);
       }
@@ -184,6 +202,7 @@ export default function QualityCheckScreen() {
           antibioticResidue:
             entry.antibioticResidue == null ? "" : entry.antibioticResidue ? "YES" : "NO",
           bacterialCount: entry.bacterialCount == null ? "" : String(entry.bacterialCount),
+          labUploadUri: "",
           labTestAttachmentUrl: entry.labTestAttachmentUrl ?? "",
         };
       }
@@ -308,6 +327,72 @@ export default function QualityCheckScreen() {
   }, [anyCowReviewed, animals, drafts]);
 
   const recommendedByRules: QcStatus | null = evaluation?.recommendedQcStatus ?? recommendedOverall;
+  const shiftOverrideAudits = useMemo(
+    () =>
+      overrideAudits
+        .filter((audit) => audit.batchDate === date && audit.shift === shift)
+        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")),
+    [date, overrideAudits, shift]
+  );
+
+  const uploadLabReportFromUri = async () => {
+    if (!selectedAnimal) {
+      Alert.alert(x("Select cow", "गाय चुनें"), x("Select a cow first.", "पहले गाय चुनें।"));
+      return;
+    }
+    if (!canApproveBatch) {
+      Alert.alert(
+        x("Role restricted", "रोल अनुमति नहीं"),
+        x("Only ADMIN or MANAGER users can upload QC lab files.", "QC लैब फ़ाइल अपलोड सिर्फ ADMIN या MANAGER कर सकता है।")
+      );
+      return;
+    }
+    if (batchLocked) {
+      Alert.alert(
+        x("Locked", "लॉक है"),
+        x("Batch is PASS. QC details are locked.", "बैच PASS है। QC विवरण लॉक हैं।")
+      );
+      return;
+    }
+
+    const uri = selectedDraft.labUploadUri.trim();
+    if (!uri) {
+      Alert.alert(
+        x("Missing URI", "URI नहीं मिला"),
+        x("Enter lab file URI/path first.", "पहले लैब फ़ाइल URI/path भरें।")
+      );
+      return;
+    }
+
+    const fileName = uri.split("/").filter(Boolean).pop() || `qc-lab-${Date.now()}.jpg`;
+    try {
+      setUploadingLab(true);
+      const uploaded = await UploadApi.uploadQcLab({
+        uri,
+        name: fileName,
+        type: guessMimeType(uri),
+      });
+      const absoluteUrl = uploaded.url.startsWith("http")
+        ? uploaded.url
+        : `${API_BASE_URL}${uploaded.url.startsWith("/") ? "" : "/"}${uploaded.url}`;
+      setDraft(selectedAnimal.animalId, {
+        labUploadUri: "",
+        labTestAttachmentUrl: absoluteUrl,
+      });
+      Alert.alert(
+        x("Upload complete", "अपलोड पूरा"),
+        x("Lab report uploaded and linked.", "लैब रिपोर्ट अपलोड होकर लिंक हो गई।")
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Upload failed", "अपलोड असफल"),
+        String(e?.message ?? x("Could not upload lab report.", "लैब रिपोर्ट अपलोड नहीं हो पाई।"))
+      );
+    } finally {
+      setUploadingLab(false);
+    }
+  };
 
   const saveStep1 = async () => {
     if (batchLocked) {
@@ -816,281 +901,411 @@ export default function QualityCheckScreen() {
               </Text>
             )}
 
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                editable={canEditQc}
-                style={{
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 9,
-                  flex: 1,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surface,
-                }}
-                placeholder={x("Fat", "फैट")}
-                placeholderTextColor="#99A99A"
-                keyboardType="decimal-pad"
-                value={selectedDraft.fat}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { fat: v })}
-              />
-              <TextInput
-                editable={canEditQc}
-                style={{
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 9,
-                  flex: 1,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surface,
-                }}
-                placeholder={x("SNF", "SNF")}
-                placeholderTextColor="#99A99A"
-                keyboardType="decimal-pad"
-                value={selectedDraft.snf}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { snf: v })}
-              />
-            </View>
+            {canApproveBatch ? (
+              <>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 9,
+                      flex: 1,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Fat", "फैट")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={selectedDraft.fat}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { fat: v })}
+                  />
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 9,
+                      flex: 1,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("SNF", "SNF")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={selectedDraft.snf}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { snf: v })}
+                  />
+                </View>
 
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                editable={canEditQc}
-                style={{
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 9,
-                  flex: 1,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surface,
-                }}
-                placeholder={x("Temp", "तापमान")}
-                placeholderTextColor="#99A99A"
-                keyboardType="decimal-pad"
-                value={selectedDraft.temperature}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { temperature: v })}
-              />
-              <TextInput
-                editable={canEditQc}
-                style={{
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 9,
-                  flex: 1,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surface,
-                }}
-                placeholder={x("Lactometer", "लैक्टोमीटर")}
-                placeholderTextColor="#99A99A"
-                keyboardType="decimal-pad"
-                value={selectedDraft.lactometer}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { lactometer: v })}
-              />
-            </View>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 9,
+                      flex: 1,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Temp", "तापमान")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={selectedDraft.temperature}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { temperature: v })}
+                  />
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 9,
+                      flex: 1,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Lactometer", "लैक्टोमीटर")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={selectedDraft.lactometer}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { lactometer: v })}
+                  />
+                </View>
 
-            <TextInput
-              editable={canEditQc}
-              style={{
-                marginTop: 8,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 9,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surface,
-              }}
-              placeholder={x("Smell/Notes", "गंध/नोट्स")}
-              placeholderTextColor="#99A99A"
-              value={selectedDraft.smellNotes}
-              onChangeText={(v) => setDraft(selectedAnimal.animalId, { smellNotes: v })}
-            />
-            <View style={{ marginTop: 8 }}>
-              <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
-                {x("Color Observation", "रंग जांच")}
-              </Text>
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-                {[
-                  { key: "NORMAL", labelEn: "Normal", labelHi: "सामान्य" },
-                  { key: "ABNORMAL", labelEn: "Abnormal", labelHi: "असामान्य" },
-                ].map((option) => {
-                  const selected = selectedDraft.colorObservation === option.key;
-                  return (
-                    <Pressable
-                      key={option.key}
-                      disabled={!canEditQc}
-                      onPress={() =>
-                        setDraft(selectedAnimal.animalId, {
-                          colorObservation: selected ? "" : option.key,
-                        })
+                <TextInput
+                  editable={canEditQc}
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    padding: 9,
+                    color: DairyColors.textPrimary,
+                    backgroundColor: DairyColors.surface,
+                  }}
+                  placeholder={x("Smell/Notes", "गंध/नोट्स")}
+                  placeholderTextColor="#99A99A"
+                  value={selectedDraft.smellNotes}
+                  onChangeText={(v) => setDraft(selectedAnimal.animalId, { smellNotes: v })}
+                />
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                    {x("Color Observation", "रंग जांच")}
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    {[
+                      { key: "NORMAL", labelEn: "Normal", labelHi: "सामान्य" },
+                      { key: "ABNORMAL", labelEn: "Abnormal", labelHi: "असामान्य" },
+                    ].map((option) => {
+                      const selected = selectedDraft.colorObservation === option.key;
+                      return (
+                        <Pressable
+                          key={option.key}
+                          disabled={!canEditQc}
+                          onPress={() =>
+                            setDraft(selectedAnimal.animalId, {
+                              colorObservation: selected ? "" : option.key,
+                            })
+                          }
+                          style={{
+                            borderWidth: 1,
+                            borderColor: selected ? DairyColors.primary : DairyColors.border,
+                            borderRadius: 999,
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                            backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                            opacity: canEditQc ? 1 : 0.6,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x(option.labelEn, option.labelHi)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 9,
+                      flex: 1,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Acidity", "अम्लता")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={selectedDraft.acidity}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { acidity: v })}
+                  />
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      padding: 9,
+                      flex: 1,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Bacterial Count", "बैक्टीरियल काउंट")}
+                    placeholderTextColor="#99A99A"
+                    keyboardType="decimal-pad"
+                    value={selectedDraft.bacterialCount}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { bacterialCount: v })}
+                  />
+                </View>
+
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                    {x("Water Adulteration", "पानी मिलावट")}
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    {[
+                      { key: "YES" as const, labelEn: "Detected", labelHi: "मिली" },
+                      { key: "NO" as const, labelEn: "Not Detected", labelHi: "नहीं मिली" },
+                    ].map((option) => {
+                      const selected = selectedDraft.waterAdulteration === option.key;
+                      return (
+                        <Pressable
+                          key={`water-${option.key}`}
+                          disabled={!canEditQc}
+                          onPress={() =>
+                            setDraft(selectedAnimal.animalId, {
+                              waterAdulteration: selected ? "" : option.key,
+                            })
+                          }
+                          style={{
+                            borderWidth: 1,
+                            borderColor: selected ? DairyColors.primary : DairyColors.border,
+                            borderRadius: 999,
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                            backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                            opacity: canEditQc ? 1 : 0.6,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x(option.labelEn, option.labelHi)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                    {x("Antibiotic Residue", "एंटीबायोटिक अवशेष")}
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                    {[
+                      { key: "YES" as const, labelEn: "Detected", labelHi: "मिला" },
+                      { key: "NO" as const, labelEn: "Not Detected", labelHi: "नहीं मिला" },
+                    ].map((option) => {
+                      const selected = selectedDraft.antibioticResidue === option.key;
+                      return (
+                        <Pressable
+                          key={`abx-${option.key}`}
+                          disabled={!canEditQc}
+                          onPress={() =>
+                            setDraft(selectedAnimal.animalId, {
+                              antibioticResidue: selected ? "" : option.key,
+                            })
+                          }
+                          style={{
+                            borderWidth: 1,
+                            borderColor: selected ? DairyColors.primary : DairyColors.border,
+                            borderRadius: 999,
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                            backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
+                            opacity: canEditQc ? 1 : 0.6,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x(option.labelEn, option.labelHi)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <TextInput
+                  editable={canEditQc}
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    padding: 9,
+                    color: DairyColors.textPrimary,
+                    backgroundColor: DairyColors.surface,
+                  }}
+                  placeholder={x("Lab file URI/path (for upload)", "अपलोड के लिए लैब फ़ाइल URI/path")}
+                  placeholderTextColor="#99A99A"
+                  value={selectedDraft.labUploadUri}
+                  onChangeText={(v) => setDraft(selectedAnimal.animalId, { labUploadUri: v })}
+                />
+
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <Pressable
+                    disabled={!canEditQc || uploadingLab || !selectedDraft.labUploadUri.trim()}
+                    onPress={uploadLabReportFromUri}
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      alignItems: "center",
+                      backgroundColor:
+                        !canEditQc || uploadingLab || !selectedDraft.labUploadUri.trim()
+                          ? DairyColors.textSecondary
+                          : DairyColors.primary,
+                    }}
+                  >
+                    <Text style={{ color: "white", fontWeight: "800" }}>
+                      {uploadingLab
+                        ? x("Uploading...", "अपलोड हो रहा है...")
+                        : x("Upload Lab Report", "लैब रिपोर्ट अपलोड करें")}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={!selectedDraft.labTestAttachmentUrl.trim()}
+                    onPress={() => {
+                      const url = selectedDraft.labTestAttachmentUrl.trim();
+                      if (url) {
+                        void Linking.openURL(url);
                       }
-                      style={{
-                        borderWidth: 1,
-                        borderColor: selected ? DairyColors.primary : DairyColors.border,
-                        borderRadius: 999,
-                        paddingHorizontal: 12,
-                        paddingVertical: 7,
-                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
-                        opacity: canEditQc ? 1 : 0.6,
-                      }}
-                    >
-                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-                        {x(option.labelEn, option.labelHi)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
+                    }}
+                    style={{
+                      flex: 1,
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      alignItems: "center",
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      backgroundColor: DairyColors.surfaceMuted,
+                      opacity: selectedDraft.labTestAttachmentUrl.trim() ? 1 : 0.5,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                      {x("Open Report", "रिपोर्ट खोलें")}
+                    </Text>
+                  </Pressable>
+                </View>
 
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TextInput
-                editable={canEditQc}
-                style={{
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 9,
-                  flex: 1,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surface,
-                }}
-                placeholder={x("Acidity", "अम्लता")}
-                placeholderTextColor="#99A99A"
-                keyboardType="decimal-pad"
-                value={selectedDraft.acidity}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { acidity: v })}
-              />
-              <TextInput
-                editable={canEditQc}
-                style={{
-                  borderWidth: 1,
-                  borderColor: DairyColors.border,
-                  borderRadius: 10,
-                  padding: 9,
-                  flex: 1,
-                  color: DairyColors.textPrimary,
-                  backgroundColor: DairyColors.surface,
-                }}
-                placeholder={x("Bacterial Count", "बैक्टीरियल काउंट")}
-                placeholderTextColor="#99A99A"
-                keyboardType="decimal-pad"
-                value={selectedDraft.bacterialCount}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { bacterialCount: v })}
-              />
-            </View>
-
-            <View style={{ marginTop: 8 }}>
-              <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
-                {x("Water Adulteration", "पानी मिलावट")}
-              </Text>
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-                {[
-                  { key: "YES" as const, labelEn: "Detected", labelHi: "मिली" },
-                  { key: "NO" as const, labelEn: "Not Detected", labelHi: "नहीं मिली" },
-                ].map((option) => {
-                  const selected = selectedDraft.waterAdulteration === option.key;
-                  return (
-                    <Pressable
-                      key={`water-${option.key}`}
-                      disabled={!canEditQc}
-                      onPress={() =>
-                        setDraft(selectedAnimal.animalId, {
-                          waterAdulteration: selected ? "" : option.key,
-                        })
-                      }
-                      style={{
-                        borderWidth: 1,
-                        borderColor: selected ? DairyColors.primary : DairyColors.border,
-                        borderRadius: 999,
-                        paddingHorizontal: 12,
-                        paddingVertical: 7,
-                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
-                        opacity: canEditQc ? 1 : 0.6,
-                      }}
-                    >
-                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-                        {x(option.labelEn, option.labelHi)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={{ marginTop: 8 }}>
-              <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
-                {x("Antibiotic Residue", "एंटीबायोटिक अवशेष")}
-              </Text>
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
-                {[
-                  { key: "YES" as const, labelEn: "Detected", labelHi: "मिला" },
-                  { key: "NO" as const, labelEn: "Not Detected", labelHi: "नहीं मिला" },
-                ].map((option) => {
-                  const selected = selectedDraft.antibioticResidue === option.key;
-                  return (
-                    <Pressable
-                      key={`abx-${option.key}`}
-                      disabled={!canEditQc}
-                      onPress={() =>
-                        setDraft(selectedAnimal.animalId, {
-                          antibioticResidue: selected ? "" : option.key,
-                        })
-                      }
-                      style={{
-                        borderWidth: 1,
-                        borderColor: selected ? DairyColors.primary : DairyColors.border,
-                        borderRadius: 999,
-                        paddingHorizontal: 12,
-                        paddingVertical: 7,
-                        backgroundColor: selected ? DairyColors.primarySoft : DairyColors.surface,
-                        opacity: canEditQc ? 1 : 0.6,
-                      }}
-                    >
-                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-                        {x(option.labelEn, option.labelHi)}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <TextInput
-              editable={canEditQc}
-              style={{
-                marginTop: 8,
-                borderWidth: 1,
-                borderColor: DairyColors.border,
-                borderRadius: 10,
-                padding: 9,
-                color: DairyColors.textPrimary,
-                backgroundColor: DairyColors.surface,
-              }}
-              placeholder={x("Lab Report URL (optional)", "लैब रिपोर्ट URL (वैकल्पिक)")}
-              placeholderTextColor="#99A99A"
-              value={selectedDraft.labTestAttachmentUrl}
-              onChangeText={(v) => setDraft(selectedAnimal.animalId, { labTestAttachmentUrl: v })}
-            />
-            {selectedDraft.qcStatus === "REJECT" ? (
-              <TextInput
-                editable={canEditQc}
+                <TextInput
+                  editable={canEditQc}
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    padding: 9,
+                    color: DairyColors.textPrimary,
+                    backgroundColor: DairyColors.surface,
+                  }}
+                  placeholder={x("Lab Report URL (auto/manual)", "लैब रिपोर्ट URL (ऑटो/मैनुअल)")}
+                  placeholderTextColor="#99A99A"
+                  value={selectedDraft.labTestAttachmentUrl}
+                  onChangeText={(v) => setDraft(selectedAnimal.animalId, { labTestAttachmentUrl: v })}
+                />
+                {selectedDraft.qcStatus === "REJECT" ? (
+                  <TextInput
+                    editable={canEditQc}
+                    style={{
+                      marginTop: 8,
+                      borderWidth: 1,
+                      borderColor: DairyColors.danger,
+                      borderRadius: 10,
+                      padding: 9,
+                      color: DairyColors.textPrimary,
+                      backgroundColor: DairyColors.surface,
+                    }}
+                    placeholder={x("Rejection reason", "रिजेक्ट कारण")}
+                    placeholderTextColor="#99A99A"
+                    value={selectedDraft.rejectionReason}
+                    onChangeText={(v) => setDraft(selectedAnimal.animalId, { rejectionReason: v })}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <View
                 style={{
                   marginTop: 8,
                   borderWidth: 1,
-                  borderColor: DairyColors.danger,
+                  borderColor: DairyColors.border,
                   borderRadius: 10,
-                  padding: 9,
-                  color: DairyColors.textPrimary,
                   backgroundColor: DairyColors.surface,
+                  padding: 10,
+                  gap: 4,
                 }}
-                placeholder={x("Rejection reason", "रिजेक्ट कारण")}
-                placeholderTextColor="#99A99A"
-                value={selectedDraft.rejectionReason}
-                onChangeText={(v) => setDraft(selectedAnimal.animalId, { rejectionReason: v })}
-              />
-            ) : null}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Fat: ${selectedDraft.fat || "-"}`, `फैट: ${selectedDraft.fat || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`SNF: ${selectedDraft.snf || "-"}`, `SNF: ${selectedDraft.snf || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Temperature: ${selectedDraft.temperature || "-"}`, `तापमान: ${selectedDraft.temperature || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Lactometer: ${selectedDraft.lactometer || "-"}`, `लैक्टोमीटर: ${selectedDraft.lactometer || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Color: ${selectedDraft.colorObservation || "-"}`, `रंग: ${selectedDraft.colorObservation || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Acidity: ${selectedDraft.acidity || "-"}`, `अम्लता: ${selectedDraft.acidity || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(
+                    `Water Adulteration: ${selectedDraft.waterAdulteration || "-"}`,
+                    `पानी मिलावट: ${selectedDraft.waterAdulteration || "-"}`
+                  )}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(
+                    `Antibiotic Residue: ${selectedDraft.antibioticResidue || "-"}`,
+                    `एंटीबायोटिक अवशेष: ${selectedDraft.antibioticResidue || "-"}`
+                  )}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Bacterial Count: ${selectedDraft.bacterialCount || "-"}`, `बैक्टीरियल काउंट: ${selectedDraft.bacterialCount || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(`Smell/Notes: ${selectedDraft.smellNotes || "-"}`, `गंध/नोट्स: ${selectedDraft.smellNotes || "-"}`)}
+                </Text>
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x(
+                    `Lab Report URL: ${selectedDraft.labTestAttachmentUrl || "-"}`,
+                    `लैब रिपोर्ट URL: ${selectedDraft.labTestAttachmentUrl || "-"}`
+                  )}
+                </Text>
+                {selectedDraft.qcStatus === "REJECT" ? (
+                  <Text style={{ color: DairyColors.danger }}>
+                    {x(
+                      `Rejection reason: ${selectedDraft.rejectionReason || "-"}`,
+                      `रिजेक्ट कारण: ${selectedDraft.rejectionReason || "-"}`
+                    )}
+                  </Text>
+                ) : null}
+              </View>
+            )}
           </View>
         ) : (
           <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
@@ -1177,6 +1392,98 @@ export default function QualityCheckScreen() {
                 `ट्रिगर: ${evaluation.triggerCodes.length > 0 ? evaluation.triggerCodes.join(", ") : "कोई नहीं"}`
               )}
             </Text>
+          </View>
+        ) : null}
+
+        {canApproveBatch ? (
+          <View
+            style={{
+              marginTop: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              borderRadius: 10,
+              backgroundColor: DairyColors.surfaceMuted,
+              padding: 10,
+            }}
+          >
+            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+              {x("Approval Timeline", "मंजूरी टाइमलाइन")}
+            </Text>
+            {shiftOverrideAudits.length === 0 ? (
+              <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                {x("No approval actions yet for this shift.", "इस शिफ्ट के लिए अभी कोई मंजूरी कार्रवाई नहीं हुई।")}
+              </Text>
+            ) : (
+              <View style={{ gap: 8, marginTop: 8 }}>
+                {shiftOverrideAudits.slice(0, 8).map((audit) => {
+                  const statusToneValue = audit.overrideApproved
+                    ? statusTone("PASS")
+                    : audit.overrideRequested
+                      ? statusTone("HOLD")
+                      : statusTone("PENDING");
+                  const eventLabel = audit.overrideApproved
+                    ? x("Override approved", "ओवरराइड मंजूर")
+                    : audit.overrideRequested
+                      ? x("Override requested", "ओवरराइड अनुरोध")
+                      : x("Rule-applied decision", "रूल से निर्णय");
+                  const auditTime = audit.createdAt
+                    ? new Date(audit.createdAt).toLocaleString()
+                    : "-";
+                  return (
+                    <View
+                      key={audit.milkQcOverrideAuditId}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        backgroundColor: DairyColors.surface,
+                        padding: 9,
+                      }}
+                    >
+                      <View
+                        style={{
+                          alignSelf: "flex-start",
+                          backgroundColor: statusToneValue.background,
+                          borderRadius: 999,
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                        }}
+                      >
+                        <Text style={{ color: statusToneValue.text, fontWeight: "700" }}>
+                          {eventLabel}
+                        </Text>
+                      </View>
+                      <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                        {x(
+                          `Requested ${audit.requestedQcStatus}, Recommended ${audit.recommendedQcStatus}, Applied ${audit.appliedQcStatus}`,
+                          `मांगा ${label("qcStatus", audit.requestedQcStatus)}, सुझाया ${label("qcStatus", audit.recommendedQcStatus)}, लागू ${label("qcStatus", audit.appliedQcStatus)}`
+                        )}
+                      </Text>
+                      <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                        {x(
+                          `Actor: ${audit.actorUsername ?? "unknown"} (${audit.actorRole ?? "UNKNOWN"})`,
+                          `यूज़र: ${audit.actorUsername ?? "unknown"} (${audit.actorRole ?? "UNKNOWN"})`
+                        )}
+                      </Text>
+                      <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                        {x(`Time: ${auditTime}`, `समय: ${auditTime}`)}
+                      </Text>
+                      <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                        {x(
+                          `Triggers: ${audit.triggerCodesCsv?.trim() ? audit.triggerCodesCsv : "None"}`,
+                          `ट्रिगर: ${audit.triggerCodesCsv?.trim() ? audit.triggerCodesCsv : "कोई नहीं"}`
+                        )}
+                      </Text>
+                      {audit.overrideReason?.trim() ? (
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x(`Reason: ${audit.overrideReason}`, `कारण: ${audit.overrideReason}`)}
+                        </Text>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </View>
         ) : null}
 
