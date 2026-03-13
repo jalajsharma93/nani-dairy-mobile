@@ -9,11 +9,13 @@ import {
   CreateVaccinationPayload,
   DewormingResponse,
   HealthApi,
+  HealthProtocolResponse,
   HealthSummaryResponse,
   MilkEntryApi,
   MilkEntryResponse,
   VaccinationResponse,
   WorklistApi,
+  WorklistDueStatus,
   WorklistItemResponse,
 } from "@/src/services/api";
 import { DairyColors } from "@/src/constants/dairy-theme";
@@ -178,6 +180,29 @@ function dueTone(status: DueStatus) {
   return { text: DairyColors.success, background: DairyColors.successSoft, label: "OK" };
 }
 
+function protocolDueTone(status: WorklistDueStatus) {
+  if (status === "OVERDUE") {
+    return { text: DairyColors.danger, background: DairyColors.dangerSoft };
+  }
+  if (status === "DUE_TODAY") {
+    return { text: DairyColors.warning, background: DairyColors.warningSoft };
+  }
+  if (status === "DUE_SOON") {
+    return { text: DairyColors.info, background: DairyColors.infoSoft };
+  }
+  return { text: DairyColors.textSecondary, background: DairyColors.surfaceMuted };
+}
+
+function protocolPriorityTone(priority: "HIGH" | "MEDIUM" | "LOW") {
+  if (priority === "HIGH") {
+    return { text: DairyColors.danger, background: DairyColors.dangerSoft };
+  }
+  if (priority === "MEDIUM") {
+    return { text: DairyColors.warning, background: DairyColors.warningSoft };
+  }
+  return { text: DairyColors.info, background: DairyColors.infoSoft };
+}
+
 function timelineTone(kind: TimelineEvent["kind"]) {
   if (kind === "VACCINATION") {
     return { text: DairyColors.info, background: DairyColors.infoSoft };
@@ -259,6 +284,7 @@ export default function HealthScreen() {
   const [selectedAnimalId, setSelectedAnimalId] = useState("");
   const [summary, setSummary] = useState<HealthSummaryResponse | null>(null);
   const [vetTasks, setVetTasks] = useState<WorklistItemResponse[]>([]);
+  const [healthProtocol, setHealthProtocol] = useState<HealthProtocolResponse | null>(null);
 
   const [vaccinations, setVaccinations] = useState<VaccinationResponse[]>([]);
   const [deworming, setDeworming] = useState<DewormingResponse[]>([]);
@@ -306,6 +332,59 @@ export default function HealthScreen() {
 
   const tabLabel = (value: HealthTab) =>
     value === "VACCINATION" ? x("VACCINATION", "टीकाकरण") : x("DEWORMING", "पेट की दवा");
+
+  const protocolDueLabel = (status: WorklistDueStatus) => {
+    if (status === "OVERDUE") return x("OVERDUE", "समय से बाकी");
+    if (status === "DUE_TODAY") return x("DUE TODAY", "आज देय");
+    if (status === "DUE_SOON") return x("DUE SOON", "जल्द देय");
+    return x("INFO", "जानकारी");
+  };
+
+  const protocolPriorityLabel = (priority: "HIGH" | "MEDIUM" | "LOW") => {
+    if (priority === "HIGH") return x("HIGH", "उच्च");
+    if (priority === "MEDIUM") return x("MEDIUM", "मध्यम");
+    return x("LOW", "कम");
+  };
+
+  const protocolCategoryLabel = (category: string) => {
+    if (category === "OBSERVATION") return x("Observation", "निरीक्षण");
+    if (category === "MILK_HEALTH") return x("Milk Health", "दूध स्वास्थ्य");
+    if (category === "HYGIENE") return x("Hygiene", "स्वच्छता");
+    if (category === "NUTRITION") return x("Nutrition", "पोषण");
+    if (category === "CLINICAL") return x("Clinical", "क्लिनिकल");
+    if (category === "BIOSECURITY") return x("Biosecurity", "बायो-सुरक्षा");
+    if (category === "CALF_CARE") return x("Calf Care", "बछड़ा देखभाल");
+    if (category === "BREEDING") return x("Breeding", "प्रजनन");
+    if (category === "PREVENTIVE") return x("Preventive", "रोकथाम");
+    if (category === "PRODUCTION") return x("Production", "उत्पादन");
+    return category;
+  };
+
+  const protocolTitleLabel = (code: string, fallbackTitle: string) => {
+    if (code === "OBS_FEED_WATER") return x("Feed and water intake check", "खाना-पानी सेवन जांच");
+    if (code === "OBS_ACTIVITY") return x("Rumination and activity check", "जुगाली और गतिविधि जांच");
+    if (code === "OBS_DUNG_URINE") return x("Dung and urine consistency check", "गोबर और मूत्र की स्थिति जांच");
+    if (code === "LAC_UDDER") return x("Udder and teat exam", "थन और निप्पल जांच");
+    if (code === "LAC_MILK_VISUAL") return x("Strip-cup milk quality check", "दूध दृश्य गुणवत्ता जांच");
+    if (code === "LAC_TEAT_DIP") return x("Post-milking teat dip compliance", "दूध के बाद टीट-डिप पालन");
+    if (code === "DRY_BCS") return x("Dry-period body condition review", "ड्राई पीरियड बॉडी कंडीशन जांच");
+    if (code === "DRY_UDDER") return x("Dry udder health watch", "ड्राई थन स्वास्थ्य निगरानी");
+    if (code === "SICK_TEMP") return x("Temperature monitoring (2x/day)", "तापमान निगरानी (दिन में 2 बार)");
+    if (code === "SICK_MED") return x("Medication compliance check", "दवा पालन जांच");
+    if (code === "SICK_ISOLATION") return x("Isolation and pen hygiene check", "अलग रखने और पेन स्वच्छता जांच");
+    if (code === "CALF_GI_RESP") return x("Calf respiratory/GI symptom check", "बछड़े में श्वसन/पेट लक्षण जांच");
+    if (code === "CALF_FEED_PROGRESS") return x("Calf feeding progress check", "बछड़ा फीडिंग प्रगति जांच");
+    if (code === "CALF_WEIGHT_WEEKLY") return x("Weekly weight trend check", "साप्ताहिक वजन ट्रेंड जांच");
+    if (code === "PREG_CALVING_WATCH") return x("Pregnancy and calving readiness check", "गर्भावस्था और बछड़ा तैयारी जांच");
+    if (code === "VACCINE_DUE") return x("Vaccination due", "टीका देय");
+    if (code === "DEWORM_DUE") return x("Deworming due", "पेट दवा देय");
+    if (code === "PREG_CHECK_DUE") return x("Pregnancy check due", "गर्भ जांच देय");
+    if (code === "CALVING_DUE") return x("Calving watch", "बछड़ा निगरानी");
+    if (code === "REPEAT_BREEDER") return x("Repeat breeder risk", "बार-बार असफल गर्भधारण जोखिम");
+    if (code === "MASTITIS_FOLLOW_UP") return x("Mastitis follow-up check", "मास्टाइटिस फॉलो-अप जांच");
+    if (code === "LOW_YIELD_ALERT") return x("Low yield anomaly follow-up", "कम दूध उत्पादन फॉलो-अप");
+    return fallbackTitle;
+  };
 
   const applyAutoNextDue = (vaccineKey: VaccineKey, doseDate: string) => {
     const nextDue = autoNextDueDate(vaccineKey, doseDate);
@@ -406,19 +485,22 @@ export default function HealthScreen() {
         setVaccinations([]);
         setDeworming([]);
         setMilkEntries([]);
+        setHealthProtocol(null);
         return;
       }
 
       const dateFrom = shiftIsoDate(date, -30);
-      const [vaccinationRows, dewormingRows, milkRows] = await Promise.all([
+      const [vaccinationRows, dewormingRows, milkRows, protocol] = await Promise.all([
         HealthApi.listVaccinations(animalId),
         HealthApi.listDeworming(animalId),
         isVetRole ? Promise.resolve([]) : MilkEntryApi.historyByAnimal(animalId, dateFrom, date),
+        HealthApi.protocol(animalId, date, 7),
       ]);
 
       setVaccinations(vaccinationRows);
       setDeworming(dewormingRows);
       setMilkEntries(milkRows);
+      setHealthProtocol(protocol);
     },
     [date, isVetRole]
   );
@@ -1043,27 +1125,184 @@ export default function HealthScreen() {
 
       <View style={sectionCard}>
         <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
-          {x("Daily Animal Check (SOP)", "रोज़ाना जानवर जांच (SOP)")}
+          {x("Animal Health Protocol", "जानवर स्वास्थ्य प्रोटोकॉल")}
         </Text>
         <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
           {x(
-            "Check these once daily for every animal. Mark as attention if any change from normal.",
-            "हर जानवर के लिए रोज़ एक बार यह जांचें। सामान्य से बदलाव हो तो ध्यान में लें।"
+            "Daily checklist auto-generated from status, age/lactation stage, and due health records.",
+            "रोज़ की चेकलिस्ट जानवर की स्थिति, उम्र/लैक्टेशन स्टेज और देय रिकॉर्ड से अपने-आप बनती है।"
           )}
         </Text>
-        {[
-          x("Feed and water intake (drop from normal)", "खाना और पानी की खपत (सामान्य से कमी)"),
-          x("Rumination/cud chewing and general alertness", "जुगाली और सामान्य सक्रियता"),
-          x("Milk yield and udder/milk abnormalities", "दूध उत्पादन और थन/दूध में असामान्यता"),
-          x("Temperature, cough, nasal/eye discharge", "तापमान, खांसी, नाक/आंख से स्राव"),
-          x("Dung/urine consistency and frequency", "गोबर/मूत्र की स्थिति और बारंबारता"),
-          x("Gait/lameness, hoof and leg condition", "चलना/लंगड़ापन, खुर और पैर की स्थिति"),
-          x("Heat signs, pregnancy and calving milestones", "हीट संकेत, गर्भावस्था और बछड़ा चरण"),
-        ].map((item, index) => (
-          <Text key={`daily-check-${index}`} style={{ marginTop: 6, color: DairyColors.textSecondary }}>
-            {`\u2022 ${item}`}
+        {!selectedAnimal ? (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {x("Select an animal to view protocol.", "प्रोटोकॉल देखने के लिए जानवर चुनें।")}
           </Text>
-        ))}
+        ) : loading ? (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {x("Loading protocol...", "प्रोटोकॉल लोड हो रहा है...")}
+          </Text>
+        ) : !healthProtocol ? (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {x("Protocol data is not available yet.", "प्रोटोकॉल डेटा अभी उपलब्ध नहीं है।")}
+          </Text>
+        ) : (
+          <>
+            <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+              {x(
+                `Animal ${healthProtocol.animalTag} | Status ${healthProtocol.animalStatus} | Age ${healthProtocol.ageMonths ?? "-"} months`,
+                `जानवर ${healthProtocol.animalTag} | स्थिति ${healthProtocol.animalStatus} | उम्र ${healthProtocol.ageMonths ?? "-"} महीने`
+              )}
+            </Text>
+            <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderRadius: 10,
+                  padding: 9,
+                  backgroundColor: DairyColors.dangerSoft,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>{x("High", "उच्च")}</Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 17 }}>
+                  {healthProtocol.highPriorityCount}
+                </Text>
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderRadius: 10,
+                  padding: 9,
+                  backgroundColor: DairyColors.warningSoft,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>{x("Medium", "मध्यम")}</Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 17 }}>
+                  {healthProtocol.mediumPriorityCount}
+                </Text>
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderRadius: 10,
+                  padding: 9,
+                  backgroundColor: DairyColors.infoSoft,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>{x("Low", "कम")}</Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 17 }}>
+                  {healthProtocol.lowPriorityCount}
+                </Text>
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderRadius: 10,
+                  padding: 9,
+                  backgroundColor: DairyColors.primarySoft,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>{x("Total", "कुल")}</Text>
+                <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 17 }}>
+                  {healthProtocol.totalItems}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 10, gap: 8 }}>
+              {healthProtocol.items.length === 0 ? (
+                <Text style={{ color: DairyColors.textSecondary }}>
+                  {x("No pending protocol items in selected window.", "चुनी हुई अवधि में कोई प्रोटोकॉल आइटम पेंडिंग नहीं है।")}
+                </Text>
+              ) : (
+                healthProtocol.items.map((item) => {
+                  const dueTone = protocolDueTone(item.dueStatus);
+                  const priorityTone = protocolPriorityTone(item.priority);
+                  return (
+                    <View
+                      key={item.protocolId}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        borderRadius: 10,
+                        backgroundColor: DairyColors.surfaceMuted,
+                        padding: 10,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <Text style={{ flex: 1, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {protocolTitleLabel(item.code, item.title)}
+                        </Text>
+                        <View
+                          style={{
+                            borderRadius: 999,
+                            backgroundColor: dueTone.background,
+                            paddingHorizontal: 9,
+                            paddingVertical: 4,
+                          }}
+                        >
+                          <Text style={{ color: dueTone.text, fontWeight: "800", fontSize: 12 }}>
+                            {protocolDueLabel(item.dueStatus)}
+                          </Text>
+                        </View>
+                      </View>
+                      {item.description ? (
+                        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>{item.description}</Text>
+                      ) : null}
+                      <View style={{ marginTop: 7, flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                        <View
+                          style={{
+                            borderRadius: 999,
+                            backgroundColor: DairyColors.surface,
+                            borderWidth: 1,
+                            borderColor: DairyColors.border,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textSecondary, fontWeight: "700", fontSize: 12 }}>
+                            {protocolCategoryLabel(item.category)}
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            borderRadius: 999,
+                            backgroundColor: priorityTone.background,
+                            paddingHorizontal: 8,
+                            paddingVertical: 4,
+                          }}
+                        >
+                          <Text style={{ color: priorityTone.text, fontWeight: "700", fontSize: 12 }}>
+                            {protocolPriorityLabel(item.priority)}
+                          </Text>
+                        </View>
+                        {item.dueDate ? (
+                          <View
+                            style={{
+                              borderRadius: 999,
+                              backgroundColor: DairyColors.surface,
+                              borderWidth: 1,
+                              borderColor: DairyColors.border,
+                              paddingHorizontal: 8,
+                              paddingVertical: 4,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textSecondary, fontWeight: "700", fontSize: 12 }}>
+                              {x(`Due ${item.dueDate}`, `देय ${item.dueDate}`)}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          </>
+        )}
       </View>
 
       {isVetRole ? (
