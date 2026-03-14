@@ -18,7 +18,7 @@ Last updated: March 14, 2026.
 - [ ] Animal lifecycle constraints and genealogy workflows
 - [x] Health protocol engine by age/lactation
 - [ ] Breeding KPI analytics
-- [ ] Treatment protocol templates + stronger evidence flow
+- [x] Treatment protocol templates + stronger evidence flow
 - [ ] Feed optimization and intake-vs-yield intelligence
 - [x] Feed procurement automation and reorder planning
 - [ ] Sales invoice lifecycle and exception approvals
