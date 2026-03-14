@@ -21,7 +21,7 @@ Last updated: March 14, 2026.
 - [x] Treatment protocol templates + stronger evidence flow
 - [ ] Feed optimization and intake-vs-yield intelligence
 - [x] Feed procurement automation and reorder planning
-- [ ] Sales invoice lifecycle and exception approvals
+- [x] Sales invoice lifecycle and exception approvals
 - [ ] Fully automated delivery-to-stock closure orchestration
 - [ ] Employee payslip PDF + finalized payout workflow
 - [ ] Offline conflict resolution and merge policy

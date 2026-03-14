@@ -177,6 +177,9 @@ export default function SalesScreen() {
   const [subscriptionInvoiceStatusAudits, setSubscriptionInvoiceStatusAudits] = useState<
     SubscriptionInvoiceStatusAuditResponse[]
   >([]);
+  const [monthSubscriptionInvoiceAudits, setMonthSubscriptionInvoiceAudits] = useState<
+    SubscriptionInvoiceStatusAuditResponse[]
+  >([]);
   const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
     total: 0,
     deliveryTaskStatus: 0,
@@ -237,6 +240,19 @@ export default function SalesScreen() {
     return totals;
   }, [statementBulkPreviewResult]);
 
+  const monthInvoiceExceptionSummary = useMemo(() => {
+    const exceptionRows = monthSubscriptionInvoiceAudits.filter(
+      (row) => row.exceptionOverride || !!row.overrideReason?.trim()
+    );
+    const approvedCount = exceptionRows.filter((row) => !!row.approvedBy?.trim()).length;
+    return {
+      totalTransitions: monthSubscriptionInvoiceAudits.length,
+      exceptionRows,
+      approvedCount,
+      pendingCount: Math.max(exceptionRows.length - approvedCount, 0),
+    };
+  }, [monthSubscriptionInvoiceAudits]);
+
   const mergeCustomers = (current: string[], incoming: string[]) => {
     const next = new Set(current);
     incoming.forEach((name) => {
@@ -284,6 +300,7 @@ export default function SalesScreen() {
       setSubscriptionStatementSummaries([]);
       setSubscriptionInvoice(null);
       setSubscriptionInvoiceStatusAudits([]);
+      setMonthSubscriptionInvoiceAudits([]);
       setStatementBulkPreviewResult(null);
       return;
     }
@@ -294,22 +311,25 @@ export default function SalesScreen() {
       setSubscriptionStatementSummaries([]);
       setSubscriptionInvoice(null);
       setSubscriptionInvoiceStatusAudits([]);
+      setMonthSubscriptionInvoiceAudits([]);
       setStatementBulkPreviewResult(null);
       return;
     }
     try {
       setStatementLoading(true);
       setSubscriptionInvoiceSummariesLoading(true);
-      const [ledger, reconciliation, invoiceSummaries, statementSummaries] = await Promise.all([
+      const [ledger, reconciliation, invoiceSummaries, statementSummaries, invoiceAudits] = await Promise.all([
         SalesApi.ledger(statementRange.from, statementRange.to),
         SalesApi.reconciliation(statementRange.from, statementRange.to),
         SalesApi.subscriptionInvoices({ month: statementMonth.trim() }),
         SalesApi.subscriptionStatements({ month: statementMonth.trim() }),
+        SalesApi.subscriptionInvoiceAudits({ month: statementMonth.trim() }),
       ]);
       setStatementRows(ledger);
       setStatementReconciliationRows(reconciliation);
       setSubscriptionInvoiceSummaries(invoiceSummaries);
       setSubscriptionStatementSummaries(statementSummaries);
+      setMonthSubscriptionInvoiceAudits(invoiceAudits);
       setStatementBulkPreviewResult(null);
       setStatementPayoutByCustomer((prev) => {
         const next = { ...prev };
@@ -323,6 +343,7 @@ export default function SalesScreen() {
       });
     } catch (e: any) {
       console.error(e);
+      setMonthSubscriptionInvoiceAudits([]);
       Alert.alert(
         x("Load failed", "लोड नहीं हुआ"),
         e?.message ?? x("Could not load month-end statement.", "महीने का स्टेटमेंट लोड नहीं हुआ।")
@@ -2992,6 +3013,95 @@ export default function SalesScreen() {
                     </Text>
                   </View>
                 ))
+              )}
+            </View>
+
+            <View
+              style={{
+                marginTop: 8,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                backgroundColor: DairyColors.surfaceMuted,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {x("Invoice Exception & Approval View", "इनवॉइस एक्सेप्शन और अप्रूवल व्यू")}
+              </Text>
+              <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                {x(
+                  `Transitions ${monthInvoiceExceptionSummary.totalTransitions} | Exceptions ${monthInvoiceExceptionSummary.exceptionRows.length} | Approved ${monthInvoiceExceptionSummary.approvedCount} | Pending review ${monthInvoiceExceptionSummary.pendingCount}`,
+                  `ट्रांजिशन ${monthInvoiceExceptionSummary.totalTransitions} | एक्सेप्शन ${monthInvoiceExceptionSummary.exceptionRows.length} | अप्रूव्ड ${monthInvoiceExceptionSummary.approvedCount} | रिव्यू लंबित ${monthInvoiceExceptionSummary.pendingCount}`
+                )}
+              </Text>
+              {subscriptionInvoiceSummariesLoading ? (
+                <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                  {x("Loading approval view...", "अप्रूवल व्यू लोड हो रहा है...")}
+                </Text>
+              ) : monthInvoiceExceptionSummary.exceptionRows.length === 0 ? (
+                <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                  {x("No invoice exceptions recorded for this month.", "इस महीने के लिए कोई इनवॉइस एक्सेप्शन रिकॉर्ड नहीं है।")}
+                </Text>
+              ) : (
+                monthInvoiceExceptionSummary.exceptionRows.slice(0, 12).map((row) => {
+                  const approved = !!row.approvedBy?.trim();
+                  return (
+                    <View
+                      key={`invoice-exception-${row.subscriptionInvoiceStatusAuditId}`}
+                      style={{
+                        marginTop: 8,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: DairyColors.border,
+                        backgroundColor: approved ? DairyColors.successSoft : DairyColors.warningSoft,
+                        padding: 8,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700", flex: 1 }}>
+                          {`${row.customerName} (${row.invoiceNumber})`}
+                        </Text>
+                        <View
+                          style={{
+                            borderRadius: 999,
+                            paddingHorizontal: 8,
+                            paddingVertical: 3,
+                            backgroundColor: approved ? DairyColors.success : DairyColors.warning,
+                          }}
+                        >
+                          <Text style={{ color: "white", fontWeight: "700" }}>
+                            {approved ? x("APPROVED", "APPROVED") : x("REVIEW", "REVIEW")}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                        {x(
+                          `${row.action}: ${row.previousStatus} → ${row.currentStatus}`,
+                          `${row.action}: ${row.previousStatus} → ${row.currentStatus}`
+                        )}
+                      </Text>
+                      <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                        {x(`${row.createdAt} | by ${row.actorUsername}`, `${row.createdAt} | द्वारा ${row.actorUsername}`)}
+                      </Text>
+                      {row.overrideReason ? (
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x(`Override reason: ${row.overrideReason}`, `ओवरराइड कारण: ${row.overrideReason}`)}
+                        </Text>
+                      ) : null}
+                      {row.statusNote ? (
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x(`Status note: ${row.statusNote}`, `स्टेटस नोट: ${row.statusNote}`)}
+                        </Text>
+                      ) : null}
+                      <Text style={{ marginTop: 2, color: approved ? DairyColors.success : DairyColors.warning, fontWeight: "700" }}>
+                        {approved
+                          ? x(`Approved by ${row.approvedBy}`, `अनुमोदन: ${row.approvedBy}`)
+                          : x("Pending approval review", "अनुमोदन समीक्षा लंबित")}
+                      </Text>
+                    </View>
+                  );
+                })
               )}
             </View>
           </View>
