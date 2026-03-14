@@ -10,6 +10,9 @@ import {
   FeedManagementApi,
   FeedInventoryForecastResponse,
   FeedInventoryForecastItemResponse,
+  FeedProcurementPlanResponse,
+  FeedProcurementRunResponse,
+  FeedEfficiencyInsightResponse,
   FeedManagementSummaryResponse,
   FeedMaterialCategory,
   FeedMaterialResponse,
@@ -27,6 +30,7 @@ import { DairyColors } from "@/src/constants/dairy-theme";
 import { todayLocalISO } from "@/src/utils/date";
 import { useI18n } from "@/src/state/i18n";
 import { useAuth } from "@/src/state/auth";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { DateInput } from "../../../components/date-input";
 import {
   flushPendingSyncOperations,
@@ -73,16 +77,17 @@ function inferRationPhase(animal?: AnimalResponse | null): FeedRationPhase {
 
 export default function FeedScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
-  const { user, hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, t } = useI18n();
-  const canAddFeed = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
-  const canEditFeed = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
-  const canManageFeedManagement = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
-  const canUpdateTaskStatus = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
-  const canManageAllFeedTasks = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
-  const isAdminFeed = hasAnyRole("ADMIN");
-  const isManagerSupervisorFeed = hasAnyRole("MANAGER", "FEED_MANAGER");
-  const isWorkerChecklistOnly = hasAnyRole("WORKER") && !canManageFeedManagement;
+  const permissions = resolveRolePermissions(user?.role);
+  const canAddFeed = permissions.canAddFeed;
+  const canEditFeed = permissions.canEditFeed;
+  const canManageFeedManagement = permissions.canManageFeedManagement;
+  const canUpdateTaskStatus = permissions.canUpdateFeedTaskStatus;
+  const canManageAllFeedTasks = permissions.canManageAllFeedTasks;
+  const isAdminFeed = permissions.isAdmin;
+  const isManagerSupervisorFeed = permissions.isManager || permissions.isFeedManager;
+  const isWorkerChecklistOnly = permissions.isWorker && !canManageFeedManagement;
   const [date, setDate] = useState(todayLocalISO());
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [logs, setLogs] = useState<FeedLogResponse[]>([]);
@@ -123,11 +128,16 @@ export default function FeedScreen() {
   const [filterAnimalId, setFilterAnimalId] = useState("");
   const [managementSummary, setManagementSummary] = useState<FeedManagementSummaryResponse | null>(null);
   const [inventoryForecast, setInventoryForecast] = useState<FeedInventoryForecastResponse | null>(null);
+  const [procurementPlan, setProcurementPlan] = useState<FeedProcurementPlanResponse | null>(null);
+  const [procurementRuns, setProcurementRuns] = useState<FeedProcurementRunResponse[]>([]);
+  const [feedEfficiency, setFeedEfficiency] = useState<FeedEfficiencyInsightResponse | null>(null);
   const [forecastLookbackDays, setForecastLookbackDays] = useState<30 | 90>(30);
+  const [procurementHorizonDays, setProcurementHorizonDays] = useState<30 | 90>(30);
   const [materials, setMaterials] = useState<FeedMaterialResponse[]>([]);
   const [recipes, setRecipes] = useState<FeedRecipeResponse[]>([]);
   const [tasks, setTasks] = useState<FeedSopTaskResponse[]>([]);
   const [assignableUsers, setAssignableUsers] = useState<AuthUserResponse[]>([]);
+  const [generatingProcurementTasks, setGeneratingProcurementTasks] = useState(false);
 
   const [materialName, setMaterialName] = useState("");
   const [materialCategory, setMaterialCategory] = useState<FeedMaterialCategory>("GREEN_FODDER");
@@ -211,6 +221,13 @@ export default function FeedScreen() {
     return x("Worker", "कर्मचारी");
   };
 
+  const efficiencyTrendLabel = (trend: FeedEfficiencyInsightResponse["herdTrend"]) => {
+    if (trend === "IMPROVING") return x("Improving", "सुधर रहा");
+    if (trend === "DECLINING") return x("Declining", "गिर रहा");
+    if (trend === "STABLE") return x("Stable", "स्थिर");
+    return x("Insufficient Data", "डाटा कम");
+  };
+
   const animalPhase = useCallback((animal: AnimalResponse): FeedRationPhase => {
     if (animal.growthStage === "CALF") {
       return "CALF";
@@ -274,9 +291,13 @@ export default function FeedScreen() {
   const loadManagement = async () => {
     try {
       setLoadingManagement(true);
-      const [summaryRes, forecastRes, materialRows, recipeRows, taskRows, userRows] = await Promise.all([
+      const [summaryRes, forecastRes, procurementRes, procurementRunsRes, efficiencyRes, materialRows, recipeRows, taskRows, userRows] =
+        await Promise.all([
         FeedManagementApi.summary(date),
         FeedManagementApi.forecast(date, forecastLookbackDays),
+        FeedManagementApi.procurementPlan(date, forecastLookbackDays, procurementHorizonDays),
+        FeedManagementApi.procurementTaskRuns(10),
+        FeedManagementApi.efficiency(date, forecastLookbackDays),
         FeedManagementApi.listMaterials(),
         FeedManagementApi.listRecipes({ activeOnly: true }),
         FeedManagementApi.listTasks({ date }),
@@ -284,6 +305,9 @@ export default function FeedScreen() {
       ]);
       setManagementSummary(summaryRes);
       setInventoryForecast(forecastRes);
+      setProcurementPlan(procurementRes);
+      setProcurementRuns(procurementRunsRes);
+      setFeedEfficiency(efficiencyRes);
       setMaterials(materialRows);
       setRecipes(recipeRows);
       setTasks(taskRows);
@@ -310,7 +334,7 @@ export default function FeedScreen() {
     loadData();
     loadManagement();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, filterAnimalId, user?.username, canManageFeedManagement, forecastLookbackDays]);
+  }, [date, filterAnimalId, user?.username, canManageFeedManagement, forecastLookbackDays, procurementHorizonDays]);
 
   useEffect(() => {
     void refreshPendingSync();
@@ -703,6 +727,38 @@ export default function FeedScreen() {
     }
   };
 
+  const generateProcurementTasks = async () => {
+    if (!canManageFeedManagement) {
+      Alert.alert(x("Role restricted", "रोल अनुमति नहीं"), t("common.manageRestricted"));
+      return;
+    }
+    try {
+      setGeneratingProcurementTasks(true);
+      const result = await FeedManagementApi.generateProcurementTasks({
+        date,
+        taskDate: date,
+        lookbackDays: forecastLookbackDays,
+        horizonDays: procurementHorizonDays,
+      });
+      await loadManagement();
+      Alert.alert(
+        x("Procurement tasks generated", "खरीद टास्क बन गए"),
+        x(
+          `${result.runMode ?? "MANUAL"} run ${result.feedProcurementRunId ?? "-"} | Created ${result.createdTasks}, skipped ${result.skippedTasks} duplicate tasks.`,
+          `${result.runMode ?? "MANUAL"} रन ${result.feedProcurementRunId ?? "-"} | ${result.createdTasks} नए टास्क बने, ${result.skippedTasks} डुप्लिकेट टास्क छोड़े गए।`
+        )
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Action failed", "क्रिया असफल"),
+        e?.message ?? x("Could not generate procurement tasks.", "खरीद टास्क नहीं बन पाए।")
+      );
+    } finally {
+      setGeneratingProcurementTasks(false);
+    }
+  };
+
   const updateTaskStatus = async (taskId: string, status: FeedSopTaskStatus) => {
     if (!canUpdateTaskStatus) {
       return;
@@ -828,6 +884,27 @@ export default function FeedScreen() {
     (inventoryForecast?.items ?? []).forEach((row) => map.set(row.feedMaterialId, row));
     return map;
   }, [inventoryForecast]);
+
+  const topEfficiencyActions = useMemo(() => {
+    if (!feedEfficiency) {
+      return [];
+    }
+    return feedEfficiency.items
+      .filter((row) => row.efficiencyBand === "INEFFICIENT" || row.efficiencyBand === "WATCH")
+      .slice(0, 5);
+  }, [feedEfficiency]);
+
+  const procurementTopItems = useMemo(() => (procurementPlan?.items ?? []).slice(0, 6), [procurementPlan]);
+
+  const procurementTopSupplierGroups = useMemo(
+    () => (procurementPlan?.supplierGroups ?? []).slice(0, 4),
+    [procurementPlan]
+  );
+
+  const latestProcurementRun = useMemo(
+    () => (procurementRuns.length > 0 ? procurementRuns[0] : null),
+    [procurementRuns]
+  );
 
   const usersForSelectedTaskRole = useMemo(
     () =>
@@ -1531,6 +1608,135 @@ export default function FeedScreen() {
                     }}
                   >
                     <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {x("Feed vs Yield Intelligence", "फीड बनाम दूध विश्लेषण")}
+                    </Text>
+                    <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                      {feedEfficiency
+                        ? x(
+                            `Window ${feedEfficiency.fromDate} to ${feedEfficiency.date} | Herd trend ${efficiencyTrendLabel(
+                              feedEfficiency.herdTrend
+                            )}`,
+                            `अवधि ${feedEfficiency.fromDate} से ${feedEfficiency.date} | झुंड ट्रेंड ${efficiencyTrendLabel(
+                              feedEfficiency.herdTrend
+                            )}`
+                          )
+                        : loadingManagement
+                          ? x("Efficiency insights loading...", "इंसाइट लोड हो रही हैं...")
+                          : x("Efficiency insights unavailable.", "इंसाइट उपलब्ध नहीं हैं।")}
+                    </Text>
+
+                    <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.dangerSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Inefficient", "अप्रभावी")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {feedEfficiency ? feedEfficiency.inefficientAnimals : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Watch", "नजर रखें")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {feedEfficiency ? feedEfficiency.watchAnimals : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Data Gap", "डाटा गैप")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {feedEfficiency ? feedEfficiency.dataGapAnimals : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.successSoft, padding: 8, minWidth: 170 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Potential 30d Savings", "संभावित 30-दिन बचत")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {feedEfficiency
+                            ? `${feedEfficiency.potentialFeedSavingsKg30Days.toFixed(2)} kg`
+                            : loadingManagement
+                              ? "..."
+                              : "0.00 kg"}
+                        </Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {feedEfficiency
+                            ? `Rs ${feedEfficiency.potentialFeedCostSavings30Days.toFixed(2)}`
+                            : loadingManagement
+                              ? "..."
+                              : "Rs 0.00"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {topEfficiencyActions.length > 0 ? (
+                      <View style={{ marginTop: 8, gap: 6 }}>
+                        {topEfficiencyActions.map((row) => {
+                          const bandColor =
+                            row.efficiencyBand === "INEFFICIENT"
+                              ? DairyColors.danger
+                              : row.efficiencyBand === "WATCH"
+                                ? DairyColors.warning
+                                : DairyColors.info;
+                          const bandSoft =
+                            row.efficiencyBand === "INEFFICIENT"
+                              ? DairyColors.dangerSoft
+                              : row.efficiencyBand === "WATCH"
+                                ? DairyColors.warningSoft
+                                : DairyColors.infoSoft;
+                          return (
+                            <View
+                              key={`eff-${row.animalId}`}
+                              style={{
+                                borderWidth: 1,
+                                borderColor: DairyColors.border,
+                                borderRadius: 10,
+                                backgroundColor: DairyColors.surface,
+                                padding: 9,
+                              }}
+                            >
+                              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                                  {(row.tag ?? "").trim() || row.animalId}
+                                </Text>
+                                <View
+                                  style={{
+                                    borderRadius: 999,
+                                    backgroundColor: bandSoft,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 4,
+                                  }}
+                                >
+                                  <Text style={{ color: bandColor, fontWeight: "700" }}>{row.efficiencyBand}</Text>
+                                </View>
+                              </View>
+                              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                                {x(
+                                  `Feed ${row.totalFeedKg.toFixed(2)} kg | Milk ${row.totalMilkLiters.toFixed(
+                                    2
+                                  )} L | Feed/L ${
+                                    row.feedPerLiter == null ? "-" : row.feedPerLiter.toFixed(3)
+                                  }`,
+                                  `चारा ${row.totalFeedKg.toFixed(2)} किलो | दूध ${row.totalMilkLiters.toFixed(
+                                    2
+                                  )} लीटर | चारा/लीटर ${
+                                    row.feedPerLiter == null ? "-" : row.feedPerLiter.toFixed(3)
+                                  }`
+                                )}
+                              </Text>
+                              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{row.recommendation}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <View
+                    style={{
+                      marginTop: 12,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 12,
+                      backgroundColor: DairyColors.surfaceMuted,
+                      padding: 10,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
                       {x("Inventory Forecast (30/90 day)", "इन्वेंट्री फोरकास्ट (30/90 दिन)")}
                     </Text>
                     <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
@@ -1601,6 +1807,241 @@ export default function FeedScreen() {
                         </Text>
                       </View>
                     </View>
+                  </View>
+
+                  <View
+                    style={{
+                      marginTop: 12,
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 12,
+                      backgroundColor: DairyColors.surfaceMuted,
+                      padding: 10,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                      {x("Procurement Planner", "खरीद योजना")}
+                    </Text>
+                    <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                      {procurementPlan
+                        ? x(
+                            `Horizon ${procurementPlan.horizonDays} days | Planned items ${procurementPlan.itemsPlanned}`,
+                            `${procurementPlan.horizonDays} दिन लक्ष्य | कुल आइटम ${procurementPlan.itemsPlanned}`
+                          )
+                        : loadingManagement
+                          ? x("Loading procurement plan...", "खरीद योजना लोड हो रही है...")
+                          : x("Procurement plan unavailable.", "खरीद योजना उपलब्ध नहीं है।")}
+                    </Text>
+
+                    <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+                      {[30, 90].map((days) => (
+                        <Pressable
+                          key={`procurement-horizon-${days}`}
+                          onPress={() => setProcurementHorizonDays(days as 30 | 90)}
+                          style={{
+                            borderWidth: 1,
+                            borderColor:
+                              procurementHorizonDays === days ? DairyColors.primary : DairyColors.border,
+                            backgroundColor:
+                              procurementHorizonDays === days ? DairyColors.primarySoft : DairyColors.surface,
+                            borderRadius: 999,
+                            paddingHorizontal: 12,
+                            paddingVertical: 7,
+                          }}
+                        >
+                          <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                            {x(`${days} day target`, `${days} दिन लक्ष्य`)}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+
+                    <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.dangerSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("High Urgency", "उच्च प्राथमिकता")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {procurementPlan ? procurementPlan.highUrgencyItems : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Medium Urgency", "मध्यम प्राथमिकता")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {procurementPlan ? procurementPlan.mediumUrgencyItems : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8, minWidth: 120 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Low Urgency", "कम प्राथमिकता")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {procurementPlan ? procurementPlan.lowUrgencyItems : loadingManagement ? "..." : "0"}
+                        </Text>
+                      </View>
+                      <View style={{ borderRadius: 10, backgroundColor: DairyColors.accentSoft, padding: 8, minWidth: 170 }}>
+                        <Text style={{ color: DairyColors.textSecondary }}>{x("Estimated Procurement", "अनुमानित खरीद")}</Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {procurementPlan
+                            ? procurementPlan.totalEstimatedCost != null
+                              ? `Rs ${procurementPlan.totalEstimatedCost.toFixed(2)}`
+                              : x("Cost unavailable", "लागत उपलब्ध नहीं")
+                            : loadingManagement
+                              ? "..."
+                              : "Rs 0.00"}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {latestProcurementRun ? (
+                      <View
+                        style={{
+                          marginTop: 8,
+                          borderWidth: 1,
+                          borderColor: DairyColors.border,
+                          borderRadius: 10,
+                          backgroundColor:
+                            latestProcurementRun.runMode === "AUTOMATED"
+                              ? DairyColors.infoSoft
+                              : DairyColors.surface,
+                          padding: 9,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                          {x("Latest Procurement Run", "नवीनतम खरीद रन")}
+                        </Text>
+                        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+                          {x(
+                            `${latestProcurementRun.runMode} | Created ${latestProcurementRun.createdTasks} | Skipped ${latestProcurementRun.skippedTasks} | Considered ${latestProcurementRun.consideredItems}`,
+                            `${latestProcurementRun.runMode} | बने ${latestProcurementRun.createdTasks} | छोड़े ${latestProcurementRun.skippedTasks} | विचारित ${latestProcurementRun.consideredItems}`
+                          )}
+                        </Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x(
+                            `Actor ${latestProcurementRun.actor ?? "-"} | Time ${latestProcurementRun.createdAt ? latestProcurementRun.createdAt.replace("T", " ").slice(0, 16) : "-"}`,
+                            `Actor ${latestProcurementRun.actor ?? "-"} | समय ${latestProcurementRun.createdAt ? latestProcurementRun.createdAt.replace("T", " ").slice(0, 16) : "-"}`
+                          )}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {procurementTopItems.length > 0 ? (
+                      <View style={{ marginTop: 8, gap: 6 }}>
+                        {procurementTopItems.map((row) => {
+                          const urgencyColor =
+                            row.urgencyLevel === "HIGH"
+                              ? DairyColors.danger
+                              : row.urgencyLevel === "MEDIUM"
+                                ? DairyColors.warning
+                                : DairyColors.info;
+                          const urgencySoft =
+                            row.urgencyLevel === "HIGH"
+                              ? DairyColors.dangerSoft
+                              : row.urgencyLevel === "MEDIUM"
+                                ? DairyColors.warningSoft
+                                : DairyColors.infoSoft;
+                          return (
+                            <View
+                              key={`proc-item-${row.feedMaterialId}`}
+                              style={{
+                                borderWidth: 1,
+                                borderColor: DairyColors.border,
+                                borderRadius: 10,
+                                backgroundColor: DairyColors.surface,
+                                padding: 9,
+                              }}
+                            >
+                              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                                <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                                  #{row.rank} {row.materialName}
+                                </Text>
+                                <View
+                                  style={{
+                                    borderRadius: 999,
+                                    backgroundColor: urgencySoft,
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 4,
+                                  }}
+                                >
+                                  <Text style={{ color: urgencyColor, fontWeight: "700" }}>
+                                    {row.urgencyLevel}
+                                  </Text>
+                                </View>
+                              </View>
+                              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                                {x(
+                                  `${row.recommendedOrderQty.toFixed(2)} ${unitLabel(row.unit)} | Supplier ${row.supplierName}`,
+                                  `${row.recommendedOrderQty.toFixed(2)} ${unitLabel(row.unit)} | सप्लायर ${row.supplierName}`
+                                )}
+                              </Text>
+                              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                                {x(
+                                  `Order by ${row.suggestedOrderByDate ?? "-"} | Score ${row.urgencyScore}`,
+                                  `${row.suggestedOrderByDate ?? "-"} तक ऑर्डर | स्कोर ${row.urgencyScore}`
+                                )}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+                        {loadingManagement
+                          ? x("Loading items...", "आइटम लोड हो रहे हैं...")
+                          : x("No procurement items for selected horizon.", "चुने गए समय के लिए खरीद आइटम नहीं हैं।")}
+                      </Text>
+                    )}
+
+                    {procurementTopSupplierGroups.length > 0 ? (
+                      <>
+                        <Text style={{ marginTop: 8, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                          {x("Top Supplier Buckets", "मुख्य सप्लायर समूह")}
+                        </Text>
+                        {procurementTopSupplierGroups.map((group) => (
+                          <View
+                            key={`proc-supplier-${group.supplierName}`}
+                            style={{
+                              marginTop: 6,
+                              borderWidth: 1,
+                              borderColor: DairyColors.border,
+                              borderRadius: 10,
+                              backgroundColor: DairyColors.surface,
+                              padding: 8,
+                            }}
+                          >
+                            <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{group.supplierName}</Text>
+                            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                              {x(
+                                `Items ${group.itemsCount} | Qty ${group.totalRecommendedQty.toFixed(2)} | Cost ${
+                                  group.totalEstimatedCost != null ? `Rs ${group.totalEstimatedCost.toFixed(2)}` : "NA"
+                                }`,
+                                `आइटम ${group.itemsCount} | मात्रा ${group.totalRecommendedQty.toFixed(2)} | लागत ${
+                                  group.totalEstimatedCost != null ? `Rs ${group.totalEstimatedCost.toFixed(2)}` : "NA"
+                                }`
+                              )}
+                            </Text>
+                          </View>
+                        ))}
+                      </>
+                    ) : null}
+
+                    {canManageFeedManagement ? (
+                      <Pressable
+                        onPress={generateProcurementTasks}
+                        disabled={generatingProcurementTasks}
+                        style={{
+                          marginTop: 10,
+                          borderRadius: 10,
+                          backgroundColor: generatingProcurementTasks
+                            ? DairyColors.primarySoft
+                            : DairyColors.primary,
+                          paddingVertical: 10,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: generatingProcurementTasks ? DairyColors.textSecondary : "#FFFFFF", fontWeight: "800" }}>
+                          {generatingProcurementTasks
+                            ? x("Generating...", "बना रहे हैं...")
+                            : x("Generate Procurement Tasks", "खरीद टास्क बनाएं")}
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
 
                   <Text style={{ marginTop: 12, color: DairyColors.textSecondary, fontWeight: "700" }}>

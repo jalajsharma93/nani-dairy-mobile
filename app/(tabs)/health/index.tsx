@@ -20,6 +20,7 @@ import {
 } from "@/src/services/api";
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useAuth } from "@/src/state/auth";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { shiftIsoDate, todayLocalISO } from "@/src/utils/date";
 import { useI18n } from "@/src/state/i18n";
 import { DateInput } from "../../../components/date-input";
@@ -270,11 +271,12 @@ function resolvedVaccinationNextDue(row: Pick<VaccinationResponse, "vaccineName"
 export default function HealthScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
   const router = useRouter();
-  const { hasAnyRole, user } = useAuth();
+  const { user } = useAuth();
   const { x, language } = useI18n();
-  const canManageHealth = hasAnyRole("ADMIN", "MANAGER", "VET");
-  const canOpenFeedLog = hasAnyRole("ADMIN", "MANAGER", "WORKER", "FEED_MANAGER");
-  const isVetRole = user?.role === "VET";
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageHealth = permissions.canManageHealth;
+  const canOpenFeedLog = permissions.canAddFeed;
+  const isVetRole = permissions.isVet;
 
   const [tab, setTab] = useState<HealthTab>("VACCINATION");
   const [dueFilter, setDueFilter] = useState<DueFilter>("ALL");

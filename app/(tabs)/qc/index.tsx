@@ -25,6 +25,7 @@ import {
 } from "@/src/utils/offline-sync";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 
 type CowQcStatus = Exclude<QcStatus, "PENDING">;
 type CowQcDraft = {
@@ -110,10 +111,11 @@ function guessMimeType(uri: string) {
 }
 
 export default function QualityCheckScreen() {
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const isAdmin = hasAnyRole("ADMIN");
-  const canApproveBatch = hasAnyRole("ADMIN", "MANAGER");
+  const permissions = resolveRolePermissions(user?.role);
+  const isAdmin = permissions.isAdmin;
+  const canApproveBatch = permissions.canApproveQc;
 
   const [date] = useState<string>(todayLocalISO());
   const [shift, setShift] = useState<Shift>("AM");

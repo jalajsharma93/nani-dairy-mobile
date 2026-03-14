@@ -36,6 +36,7 @@ import {
 } from "@/src/utils/offline-sync";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 
 function routeKey(routeName?: string | null) {
   const route = routeName?.trim();
@@ -115,12 +116,13 @@ function normalizePreviewReason(reason?: string | null) {
 }
 
 export default function DeliveryOpsScreen() {
-  const { user, hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const canAccess = hasAnyRole("ADMIN", "MANAGER", "DELIVERY", "WORKER");
-  const isPrivileged = hasAnyRole("ADMIN", "MANAGER");
-  const canCreateAddOn = hasAnyRole("ADMIN", "MANAGER", "DELIVERY");
-  const canBulkRunActions = hasAnyRole("ADMIN", "MANAGER", "DELIVERY");
+  const permissions = resolveRolePermissions(user?.role);
+  const canAccess = permissions.canDeliveryOps;
+  const isPrivileged = permissions.isAdmin || permissions.isManager;
+  const canCreateAddOn = permissions.canCreateDeliveryAddOn;
+  const canBulkRunActions = permissions.canCreateDeliveryAddOn;
   const canViewTeamReconciliation = isPrivileged;
 
   const [date, setDate] = useState(todayLocalISO());

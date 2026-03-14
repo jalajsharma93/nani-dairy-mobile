@@ -29,6 +29,7 @@ import {
   queueGenericTaskStatus,
   shouldQueueForOffline,
 } from "@/src/utils/offline-sync";
+import { resolveRolePermissions } from "@/src/state/permissions";
 
 type TaskTimeGroup = "OVERDUE" | "MORNING" | "AFTERNOON" | "EVENING" | "ANYTIME";
 
@@ -80,12 +81,13 @@ function statusOptions(task: GenericTaskResponse): GenericTaskStatus[] {
 
 export default function TodayTasksScreen() {
   const { x } = useI18n();
-  const { user, hasAnyRole } = useAuth();
-  const canManageTasks = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
-  const canManageAllGenericTasks = hasAnyRole("ADMIN", "MANAGER");
-  const canManageTaskAutomation = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
-  const canViewDeliveryTasks = hasAnyRole("ADMIN", "MANAGER", "WORKER", "DELIVERY");
-  const canManageDeliveryTaskAssignments = hasAnyRole("ADMIN", "MANAGER");
+  const { user } = useAuth();
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageTasks = permissions.canManageTasks;
+  const canManageAllGenericTasks = permissions.canManageAllGenericTasks;
+  const canManageTaskAutomation = permissions.canManageTaskAutomation;
+  const canViewDeliveryTasks = permissions.canViewDeliveryTasks;
+  const canManageDeliveryTaskAssignments = permissions.canManageDeliveryTaskAssignments;
 
   const [date, setDate] = useState(todayLocalISO());
   const [loading, setLoading] = useState(false);

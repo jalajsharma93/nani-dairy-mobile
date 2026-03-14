@@ -18,6 +18,7 @@ import { DairyColors } from "@/src/constants/dairy-theme";
 import { todayLocalISO } from "@/src/utils/date";
 import { useI18n } from "@/src/state/i18n";
 import { useAuth } from "@/src/state/auth";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { DateInput } from "../../../components/date-input";
 
 const PREGNANCY_OPTIONS: BreedingPregnancyResult[] = ["PENDING", "PREGNANT", "NOT_PREGNANT"];
@@ -130,8 +131,9 @@ export default function BreedingScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
   const router = useRouter();
   const { x } = useI18n();
-  const { hasAnyRole } = useAuth();
-  const canManageBreeding = hasAnyRole("ADMIN", "MANAGER", "VET");
+  const { user } = useAuth();
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageBreeding = permissions.canManageBreeding;
 
   const [date] = useState(todayLocalISO());
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);

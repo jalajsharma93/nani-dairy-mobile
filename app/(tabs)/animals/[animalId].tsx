@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import {
   AnimalApi,
   AnimalResponse,
+  AnimalLifecycleEventResponse,
   FeedApi,
   FeedLogResponse,
   HealthApi,
@@ -33,6 +34,8 @@ function statusTone(status?: AnimalResponse["status"]) {
   if (status === "LACTATING") return { text: DairyColors.success, background: DairyColors.successSoft };
   if (status === "DRY") return { text: DairyColors.warning, background: DairyColors.warningSoft };
   if (status === "SICK") return { text: DairyColors.danger, background: DairyColors.dangerSoft };
+  if (status === "RETIRED") return { text: DairyColors.textSecondary, background: DairyColors.surfaceMuted };
+  if (status === "DEAD") return { text: "#6B7280", background: "#E5E7EB" };
   return { text: DairyColors.info, background: DairyColors.infoSoft };
 }
 
@@ -80,7 +83,12 @@ export default function AnimalDetailsScreen() {
   const [vaccinations, setVaccinations] = useState<VaccinationResponse[]>([]);
   const [deworming, setDeworming] = useState<DewormingResponse[]>([]);
   const [treatments, setTreatments] = useState<MedicalTreatmentResponse[]>([]);
-  const [allAnimals, setAllAnimals] = useState<AnimalResponse[]>([]);
+  const [motherAnimal, setMotherAnimal] = useState<AnimalResponse | null>(null);
+  const [sireAnimal, setSireAnimal] = useState<AnimalResponse | null>(null);
+  const [offspring, setOffspring] = useState<AnimalResponse[]>([]);
+  const [offspringCount, setOffspringCount] = useState(0);
+  const [activeOffspringCount, setActiveOffspringCount] = useState(0);
+  const [lifecycleHistory, setLifecycleHistory] = useState<AnimalLifecycleEventResponse[]>([]);
   const [showAllMilkHistory, setShowAllMilkHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [profitabilityLoading, setProfitabilityLoading] = useState(false);
@@ -110,28 +118,30 @@ export default function AnimalDetailsScreen() {
     try {
       setLoading(true);
       const fromDate = shiftIsoDate(today, -29);
-      // Load primary animal profile first so the details page still works
-      // when optional sections (milk/feed/health) are unavailable.
-      const animalRes = await AnimalApi.get(resolvedAnimalId);
-      setAnimal(animalRes);
+      const genealogy = await AnimalApi.genealogy(resolvedAnimalId);
+      setAnimal(genealogy.animal);
+      setMotherAnimal(genealogy.mother ?? null);
+      setSireAnimal(genealogy.sire ?? null);
+      setOffspring(genealogy.offspring ?? []);
+      setOffspringCount(genealogy.offspringCount ?? 0);
+      setActiveOffspringCount(genealogy.activeOffspringCount ?? 0);
 
-      const [animalsRes, milkRes, feedRes, vaccRes, dewormRes, treatmentRes] = await Promise.allSettled([
-        AnimalApi.list(),
+      const [milkRes, feedRes, vaccRes, dewormRes, treatmentRes, lifecycleRes] = await Promise.allSettled([
         MilkEntryApi.historyByAnimal(resolvedAnimalId, fromDate, today),
         FeedApi.list({ date: today, animalId: resolvedAnimalId }),
         HealthApi.listVaccinations(resolvedAnimalId),
         HealthApi.listDeworming(resolvedAnimalId),
         TreatmentApi.list(resolvedAnimalId),
+        AnimalApi.lifecycleHistory(resolvedAnimalId),
       ]);
 
-      const herdAnimals = animalsRes.status === "fulfilled" ? animalsRes.value : [];
       const animalMilkRows = milkRes.status === "fulfilled" ? milkRes.value : [];
-      setAllAnimals(herdAnimals);
       setMilkHistory(animalMilkRows);
       setTodayFeedLogs(feedRes.status === "fulfilled" ? feedRes.value : []);
       setVaccinations(vaccRes.status === "fulfilled" ? vaccRes.value : []);
       setDeworming(dewormRes.status === "fulfilled" ? dewormRes.value : []);
       setTreatments(treatmentRes.status === "fulfilled" ? treatmentRes.value : []);
+      setLifecycleHistory(lifecycleRes.status === "fulfilled" ? lifecycleRes.value : []);
       void loadProfitability();
     } catch (e: any) {
       console.error(e);
@@ -225,30 +235,8 @@ export default function AnimalDetailsScreen() {
       "योगदान सकारात्मक है लेकिन मध्यम है। बड़े निर्णय से पहले 2-4 सप्ताह और ट्रैक करें।"
     );
   }, [animal?.status, profitability, x]);
-
-  const resolveAnimalRef = useCallback(
-    (reference?: string | null) => {
-      const needle = normalizeRef(reference);
-      if (!needle) {
-        return null;
-      }
-      return (
-        allAnimals.find((row) => normalizeRef(row.animalId) === needle) ??
-        allAnimals.find((row) => normalizeRef(row.tag) === needle) ??
-        null
-      );
-    },
-    [allAnimals]
-  );
-
-  const motherAnimal = useMemo(
-    () => resolveAnimalRef(animal?.motherAnimalId),
-    [animal?.motherAnimalId, resolveAnimalRef]
-  );
-  const sireAnimal = useMemo(
-    () => resolveAnimalRef(animal?.sireTag),
-    [animal?.sireTag, resolveAnimalRef]
-  );
+  const offspringPreview = useMemo(() => offspring.slice(0, 8), [offspring]);
+  const lifecyclePreview = useMemo(() => lifecycleHistory.slice(0, 10), [lifecycleHistory]);
 
   const tone = statusTone(animal?.status);
   const profitabilityConfidenceTone = profitability ? confidenceTone(profitability.confidence) : null;
@@ -289,6 +277,58 @@ export default function AnimalDetailsScreen() {
         >
           <Ionicons name={loading ? "sync-circle" : "refresh"} size={18} color={DairyColors.primary} />
         </Pressable>
+      </View>
+
+      <View
+        style={{
+          marginTop: 12,
+          borderWidth: 1,
+          borderColor: DairyColors.border,
+          borderRadius: 14,
+          backgroundColor: DairyColors.surface,
+          padding: 12,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Lifecycle History", "लाइफसाइकिल हिस्ट्री")}
+        </Text>
+        {lifecyclePreview.length === 0 ? (
+          <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
+            {x("No lifecycle transitions recorded yet.", "अभी लाइफसाइकिल ट्रांजिशन रिकॉर्ड नहीं हैं।")}
+          </Text>
+        ) : (
+          lifecyclePreview.map((row) => (
+            <View
+              key={row.animalLifecycleEventId}
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                borderRadius: 10,
+                backgroundColor: DairyColors.surfaceMuted,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                {x(
+                  `${row.fromStatus ?? "NEW"} -> ${row.toStatus} | ${row.fromActive == null ? "-" : row.fromActive ? "Active" : "Inactive"} -> ${row.toActive ? "Active" : "Inactive"}`,
+                  `${row.fromStatus ?? "NEW"} -> ${row.toStatus} | ${row.fromActive == null ? "-" : row.fromActive ? "सक्रिय" : "निष्क्रिय"} -> ${row.toActive ? "सक्रिय" : "निष्क्रिय"}`
+                )}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `By ${row.changedBy ?? "unknown"} on ${row.changedAt ? row.changedAt.replace("T", " ").slice(0, 16) : "-"}`,
+                  `${row.changedBy ?? "unknown"} द्वारा ${row.changedAt ? row.changedAt.replace("T", " ").slice(0, 16) : "-"}`
+                )}
+              </Text>
+              {row.reason ? (
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {x(`Reason: ${row.reason}`, `कारण: ${row.reason}`)}
+                </Text>
+              ) : null}
+            </View>
+          ))
+        )}
       </View>
 
       <View
@@ -404,6 +444,47 @@ export default function AnimalDetailsScreen() {
             </Text>
           </Pressable>
         ) : null}
+
+        <Text style={{ marginTop: 12, color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Offspring", "संतान")}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            `${offspringCount} total | ${activeOffspringCount} active`,
+            `${offspringCount} कुल | ${activeOffspringCount} सक्रिय`
+          )}
+        </Text>
+        {offspringPreview.length === 0 ? (
+          <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+            {x("No offspring records linked yet.", "अभी संतान रिकॉर्ड लिंक नहीं हैं।")}
+          </Text>
+        ) : (
+          <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {offspringPreview.map((child) => (
+              <Pressable
+                key={child.animalId}
+                onPress={() =>
+                  router.push({
+                    pathname: "/animals/[animalId]",
+                    params: { animalId: child.animalId },
+                  })
+                }
+                style={{
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  backgroundColor: DairyColors.surfaceMuted,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                  {child.tag}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
       </View>
 
       <View

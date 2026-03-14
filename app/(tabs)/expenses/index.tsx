@@ -18,6 +18,7 @@ import {
 } from "@/src/utils/offline-sync";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { DateInput } from "../../../components/date-input";
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
@@ -36,9 +37,10 @@ const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "C
 const money = (value: number) => `Rs ${value.toFixed(2)}`;
 
 export default function ExpensesScreen() {
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const canManageExpenses = hasAnyRole("ADMIN");
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageExpenses = permissions.canManageExpenses;
 
   const [date, setDate] = useState(todayLocalISO());
   const [expenses, setExpenses] = useState<ExpenseResponse[]>([]);

@@ -12,13 +12,15 @@ import {
 } from "@/src/services/api";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 
 const ROLE_OPTIONS: UserRole[] = ["ADMIN", "MANAGER", "WORKER", "FEED_MANAGER", "DELIVERY", "VET"];
 
 export default function UsersScreen() {
-  const { hasAnyRole, user: currentUser } = useAuth();
+  const { user: currentUser } = useAuth();
   const { x } = useI18n();
-  const isAdmin = hasAnyRole("ADMIN");
+  const permissions = resolveRolePermissions(currentUser?.role);
+  const isAdmin = permissions.isAdmin;
 
   const [loading, setLoading] = useState(false);
   const [auditsLoading, setAuditsLoading] = useState(false);

@@ -1,6 +1,6 @@
 # NANI Dairy Task Backlog
 
-Last updated: March 9, 2026.
+Last updated: March 14, 2026.
 
 ## Completed Phase 2 Core
 - [x] Phase 2.1: Subscription billing depth
@@ -16,11 +16,11 @@ Last updated: March 9, 2026.
 - [ ] Fine-grained action-level role policies
 - [ ] QC advanced lab parameters + approval hardening
 - [ ] Animal lifecycle constraints and genealogy workflows
-- [ ] Health protocol engine by age/lactation
+- [x] Health protocol engine by age/lactation
 - [ ] Breeding KPI analytics
 - [ ] Treatment protocol templates + stronger evidence flow
 - [ ] Feed optimization and intake-vs-yield intelligence
-- [ ] Feed procurement automation and reorder planning
+- [x] Feed procurement automation and reorder planning
 - [ ] Sales invoice lifecycle and exception approvals
 - [ ] Fully automated delivery-to-stock closure orchestration
 - [ ] Employee payslip PDF + finalized payout workflow
@@ -36,3 +36,10 @@ Last updated: March 9, 2026.
 ## Deferred
 - [ ] PostgreSQL migration
 - [ ] CI/CD finalization
+
+## Post-Deployment Technical Debt
+- [ ] Refactor oversized UI/API files (reduce complexity before scale)
+  - [ ] Split large tab screens into feature subcomponents/hooks (`sales`, `delivery-ops`, `feed`, `employees`)
+  - [ ] Split `src/services/api.ts` into domain clients (`animals`, `milk`, `sales`, `feed`, `health`, `tasks`)
+  - [ ] Extract shared role/actor helpers to avoid repeated controller logic
+  - [ ] Add regression checks around refactored flows (login, milk, QC, sales, delivery)

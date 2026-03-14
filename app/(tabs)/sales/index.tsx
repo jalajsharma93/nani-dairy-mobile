@@ -25,12 +25,14 @@ import {
   SalesApi,
   SalesSummaryResponse,
   Shift,
+  SubscriptionInvoiceStatusAuditResponse,
 } from "@/src/services/api";
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { DateInput } from "../../../components/date-input";
 import { shiftIsoDate, todayLocalISO } from "@/src/utils/date";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import {
   getPendingSyncSummary,
   PendingSyncSummary,
@@ -94,11 +96,12 @@ function monthRange(monthIso: string): { from: string; to: string } | null {
 
 export default function SalesScreen() {
   const router = useRouter();
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const canManageSales = hasAnyRole("ADMIN", "MANAGER");
-  const isAdmin = hasAnyRole("ADMIN");
-  const canDeliveryChecklist = hasAnyRole("ADMIN", "MANAGER", "WORKER", "DELIVERY");
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageSales = permissions.canManageSales;
+  const isAdmin = permissions.isAdmin;
+  const canDeliveryChecklist = permissions.canDeliveryChecklist;
   const isDeliveryOnly = canDeliveryChecklist && !canManageSales;
 
   const [sales, setSales] = useState<SaleResponse[]>([]);
@@ -169,6 +172,11 @@ export default function SalesScreen() {
   >([]);
   const [subscriptionInvoiceSummariesLoading, setSubscriptionInvoiceSummariesLoading] = useState(false);
   const [subscriptionStatementExporting, setSubscriptionStatementExporting] = useState(false);
+  const [subscriptionInvoiceExporting, setSubscriptionInvoiceExporting] = useState(false);
+  const [subscriptionInvoiceAuditsLoading, setSubscriptionInvoiceAuditsLoading] = useState(false);
+  const [subscriptionInvoiceStatusAudits, setSubscriptionInvoiceStatusAudits] = useState<
+    SubscriptionInvoiceStatusAuditResponse[]
+  >([]);
   const [pendingSync, setPendingSync] = useState<PendingSyncSummary>({
     total: 0,
     deliveryTaskStatus: 0,
@@ -275,6 +283,7 @@ export default function SalesScreen() {
       setSubscriptionInvoiceSummaries([]);
       setSubscriptionStatementSummaries([]);
       setSubscriptionInvoice(null);
+      setSubscriptionInvoiceStatusAudits([]);
       setStatementBulkPreviewResult(null);
       return;
     }
@@ -284,6 +293,7 @@ export default function SalesScreen() {
       setSubscriptionInvoiceSummaries([]);
       setSubscriptionStatementSummaries([]);
       setSubscriptionInvoice(null);
+      setSubscriptionInvoiceStatusAudits([]);
       setStatementBulkPreviewResult(null);
       return;
     }
@@ -323,6 +333,28 @@ export default function SalesScreen() {
     }
   }, [canManageSales, statementMonth, statementRange, statementKey, x]);
 
+  const downloadCsvContent = useCallback(
+    async (csv: string, fileName: string) => {
+      if (Platform.OS === "web" && typeof document !== "undefined") {
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        return;
+      }
+      await Share.share({
+        title: fileName,
+        message: csv,
+      });
+    },
+    []
+  );
+
   const exportSubscriptionStatementsCsv = useCallback(async () => {
     if (!canManageSales) {
       return;
@@ -340,22 +372,7 @@ export default function SalesScreen() {
       setSubscriptionStatementExporting(true);
       const csv = await SalesApi.exportSubscriptionStatementsCsv({ month: monthText });
       const fileName = `subscription-statements-${monthText}.csv`;
-      if (Platform.OS === "web" && typeof document !== "undefined") {
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      } else {
-        await Share.share({
-          title: fileName,
-          message: csv,
-        });
-      }
+      await downloadCsvContent(csv, fileName);
     } catch (e: any) {
       console.error(e);
       Alert.alert(
@@ -365,11 +382,64 @@ export default function SalesScreen() {
     } finally {
       setSubscriptionStatementExporting(false);
     }
-  }, [canManageSales, statementMonth, x]);
+  }, [canManageSales, downloadCsvContent, statementMonth, x]);
+
+  const exportSubscriptionInvoicesCsv = useCallback(async () => {
+    if (!canManageSales) {
+      return;
+    }
+    const monthText = statementMonth.trim();
+    if (!ISO_MONTH_REGEX.test(monthText)) {
+      Alert.alert(
+        x("Invalid month", "गलत महीना"),
+        x("Use month format YYYY-MM.", "महीना YYYY-MM फॉर्मेट में डालें।")
+      );
+      return;
+    }
+
+    try {
+      setSubscriptionInvoiceExporting(true);
+      const csv = await SalesApi.exportSubscriptionInvoicesCsv({ month: monthText });
+      const fileName = `subscription-invoices-${monthText}.csv`;
+      await downloadCsvContent(csv, fileName);
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Export failed", "एक्सपोर्ट नहीं हुआ"),
+        e?.message ?? x("Could not export subscription invoice CSV.", "सब्सक्रिप्शन इनवॉइस CSV एक्सपोर्ट नहीं हुआ।")
+      );
+    } finally {
+      setSubscriptionInvoiceExporting(false);
+    }
+  }, [canManageSales, downloadCsvContent, statementMonth, x]);
+
+  const loadSubscriptionInvoiceAudits = useCallback(
+    async (customerIdToLoad: string) => {
+      if (!canManageSales || !customerIdToLoad.trim() || !ISO_MONTH_REGEX.test(statementMonth.trim())) {
+        setSubscriptionInvoiceStatusAudits([]);
+        return;
+      }
+      try {
+        setSubscriptionInvoiceAuditsLoading(true);
+        const rows = await SalesApi.subscriptionInvoiceAudits({
+          month: statementMonth.trim(),
+          customerId: customerIdToLoad.trim(),
+        });
+        setSubscriptionInvoiceStatusAudits(rows);
+      } catch (e: any) {
+        console.error(e);
+        setSubscriptionInvoiceStatusAudits([]);
+      } finally {
+        setSubscriptionInvoiceAuditsLoading(false);
+      }
+    },
+    [canManageSales, statementMonth]
+  );
 
   const loadSubscriptionInvoice = useCallback(async () => {
     if (!canManageSales) {
       setSubscriptionInvoice(null);
+      setSubscriptionInvoiceStatusAudits([]);
       return;
     }
     const customerIdToLoad = subscriptionInvoiceCustomerId.trim();
@@ -389,11 +459,14 @@ export default function SalesScreen() {
     }
     try {
       setSubscriptionInvoiceLoading(true);
-      const invoice = await SalesApi.subscriptionInvoice({
-        customerId: customerIdToLoad,
-        month: statementMonth.trim(),
-        includeDaily: subscriptionInvoiceIncludeDaily,
-      });
+      const [invoice] = await Promise.all([
+        SalesApi.subscriptionInvoice({
+          customerId: customerIdToLoad,
+          month: statementMonth.trim(),
+          includeDaily: subscriptionInvoiceIncludeDaily,
+        }),
+        loadSubscriptionInvoiceAudits(customerIdToLoad),
+      ]);
       setSubscriptionInvoice(invoice);
     } catch (e: any) {
       console.error(e);
@@ -404,7 +477,14 @@ export default function SalesScreen() {
     } finally {
       setSubscriptionInvoiceLoading(false);
     }
-  }, [canManageSales, statementMonth, subscriptionInvoiceCustomerId, subscriptionInvoiceIncludeDaily, x]);
+  }, [
+    canManageSales,
+    loadSubscriptionInvoiceAudits,
+    statementMonth,
+    subscriptionInvoiceCustomerId,
+    subscriptionInvoiceIncludeDaily,
+    x,
+  ]);
 
   const updateSubscriptionInvoiceStatus = useCallback(
     async (next: "FINALIZE" | "POST" | "REOPEN") => {
@@ -2595,6 +2675,76 @@ export default function SalesScreen() {
                     )}
                   </Text>
                 ) : null}
+
+                <View
+                  style={{
+                    marginTop: 8,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    backgroundColor: DairyColors.surfaceMuted,
+                    padding: 8,
+                  }}
+                >
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                    {x("Invoice Status Timeline", "इनवॉइस स्टेटस टाइमलाइन")}
+                  </Text>
+                  {subscriptionInvoiceAuditsLoading ? (
+                    <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                      {x("Loading timeline...", "टाइमलाइन लोड हो रही है...")}
+                    </Text>
+                  ) : subscriptionInvoiceStatusAudits.length === 0 ? (
+                    <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                      {x("No status transitions recorded yet.", "अभी कोई स्टेटस बदलाव रिकॉर्ड नहीं है।")}
+                    </Text>
+                  ) : (
+                    subscriptionInvoiceStatusAudits.slice(0, 8).map((row, index) => (
+                      <View
+                        key={row.subscriptionInvoiceStatusAuditId}
+                        style={{
+                          marginTop: index === 0 ? 6 : 8,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          borderColor: DairyColors.border,
+                          backgroundColor: DairyColors.surface,
+                          padding: 8,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                          {x(
+                            `${row.action}: ${row.previousStatus} → ${row.currentStatus}`,
+                            `${row.action}: ${row.previousStatus} → ${row.currentStatus}`
+                          )}
+                        </Text>
+                        <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                          {x(
+                            `${row.createdAt} | by ${row.actorUsername}`,
+                            `${row.createdAt} | द्वारा ${row.actorUsername}`
+                          )}
+                        </Text>
+                        {row.statusNote ? (
+                          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                            {x(`Note: ${row.statusNote}`, `नोट: ${row.statusNote}`)}
+                          </Text>
+                        ) : null}
+                        {row.overrideReason ? (
+                          <Text style={{ marginTop: 2, color: DairyColors.warning, fontWeight: "700" }}>
+                            {x(`Override reason: ${row.overrideReason}`, `ओवरराइड कारण: ${row.overrideReason}`)}
+                          </Text>
+                        ) : null}
+                        {row.exceptionOverride ? (
+                          <Text style={{ marginTop: 2, color: DairyColors.info }}>
+                            {x(
+                              `Exception override approved by ${row.approvedBy ?? "unknown"}.`,
+                              `एक्सेप्शन ओवरराइड ${row.approvedBy ?? "unknown"} द्वारा अनुमोदित।`
+                            )}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))
+                  )}
+                </View>
+
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(
                     `Opening ${amount(subscriptionInvoice.openingPendingAmount)} | Closing ${amount(subscriptionInvoice.closingPendingAmount)} | Running ${amount(subscriptionInvoice.currentRunningBalance)}`,
@@ -2711,9 +2861,30 @@ export default function SalesScreen() {
             ) : null}
 
             <View style={{ marginTop: 8 }}>
-              <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
-                {x("Invoice summary (all subscription customers)", "इनवॉइस सारांश (सभी सब्सक्रिप्शन ग्राहक)")}
-              </Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700", flex: 1 }}>
+                  {x("Invoice summary (all subscription customers)", "इनवॉइस सारांश (सभी सब्सक्रिप्शन ग्राहक)")}
+                </Text>
+                <Pressable
+                  disabled={subscriptionInvoiceExporting || subscriptionInvoiceSummariesLoading}
+                  onPress={() => void exportSubscriptionInvoicesCsv()}
+                  style={{
+                    borderRadius: 8,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    backgroundColor:
+                      subscriptionInvoiceExporting || subscriptionInvoiceSummariesLoading
+                        ? DairyColors.textSecondary
+                        : DairyColors.info,
+                  }}
+                >
+                  <Text style={{ color: "white", fontWeight: "700" }}>
+                    {subscriptionInvoiceExporting
+                      ? x("Exporting...", "एक्सपोर्ट...")
+                      : x("Export CSV", "CSV एक्सपोर्ट")}
+                  </Text>
+                </Pressable>
+              </View>
               {subscriptionInvoiceSummariesLoading ? (
                 <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>{x("Loading...", "लोड...")}</Text>
               ) : subscriptionInvoiceSummaries.length === 0 ? (

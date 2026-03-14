@@ -15,6 +15,7 @@ import {
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
@@ -70,9 +71,10 @@ function normalizeSkipDatesCsv(input: string | null | undefined) {
 }
 
 export default function CustomersScreen() {
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const canManageCustomers = hasAnyRole("ADMIN", "MANAGER");
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageCustomers = permissions.canManageCustomers;
 
   const [rows, setRows] = useState<CustomerRecordResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -951,14 +953,7 @@ export default function CustomersScreen() {
                         </Pressable>
                       </View>
                     </>
-                  ) : (
-                    <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
-                      {x(
-                        "Read-only: only ADMIN or MANAGER can add or edit subscription lines.",
-                        "रीड-ओनली: सब्सक्रिप्शन लाइन जोड़ना या बदलना सिर्फ ADMIN या MANAGER कर सकता है।"
-                      )}
-                    </Text>
-                  )}
+                  ) : null}
 
                   <View style={{ marginTop: 10, gap: 8 }}>
                     {plannerRows.length === 0 ? (

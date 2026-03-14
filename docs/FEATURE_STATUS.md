@@ -1,6 +1,6 @@
 # NANI Dairy Feature Status
 
-As of March 9, 2026 (mobile codebase + API contract in `src/services/api.ts`).
+As of March 14, 2026 (mobile codebase + API contract in `src/services/api.ts`).
 
 ## Status Legend
 - `Implemented`: usable in app today.
@@ -16,11 +16,11 @@ As of March 9, 2026 (mobile codebase + API contract in `src/services/api.ts`).
 | Animals | Partial | Animal create/update/list, detail screen, parentage fields, lifecycle basics, health links, per-animal profitability cards, and herd profitability ranking. | Full lifecycle workflows (retire/sold/dead transitions and constraints), advanced genealogy workflows. |
 | Milk Entry | Implemented | Per-animal entry, AM/PM save, batch total save, QC lock behavior after PASS, offline queue support. | Shift cutoff locks, stronger anomaly alerts. |
 | QC | Partial | Batch QC status + cow-level QC capture with key parameters and updates. | Full extended lab/attachment parameters, automated threshold rule engine + approvals. |
-| Animal Health | Partial | Vaccination/deworming records, due/overdue tracking, timeline view, vaccine schedule support. | Rich protocol engine by age/lactation, attachments and vet workflow enrichment. |
+| Animal Health | Partial | Vaccination/deworming records, due/overdue tracking, timeline view, vaccine schedule support, and age/lactation-based health protocol checklist generation per animal. | Attachments and deeper vet evidence workflow enrichment. |
 | Breeding & Calving | Partial | Heat/insemination/pregnancy/calving events, summary indicators, calf linkage fields. | Advanced KPIs (conception/repeat breeder trends), deeper decision analytics. |
 | Treatments | Partial | Per-animal treatment records, follow-up dates, withdrawal dates, prescription URL handling, and withdrawal-compliance lock wired into sale/dispatch flows (with privileged override path). | Deeper protocol templates and stronger prescription evidence workflow. |
 | Feed Monitoring | Partial | Per-cow/group/all feed logs, ration phase handling, feed management task support. | Optimization engine, intake-vs-yield intelligence, stricter workflow approvals. |
-| Feed Management | Partial | Raw material, recipes, SOP tasks, low stock awareness, and 30/90-day consumption forecast with reorder quantity/cost recommendations. | Procurement planning automation and approval workflow hardening. |
+| Feed Management | Partial | Raw material, recipes, SOP tasks, low stock awareness, 30/90-day consumption forecast with reorder quantity/cost recommendations, and procurement run automation with run-history visibility. | Approval workflow hardening and tighter procurement policy controls. |
 | Customers | Implemented | Customer master, subscription toggles, subscription lines (AM/PM/products), pause/skip dates, balance tracking. | Proration and advanced billing rules. |
 | Sales | Partial | Sale create/edit, cooperative quality pricing inputs, ledger, reconciliation, month-close bulk ops, subscription invoice/statement APIs with proration + holiday credit math, and invoice lifecycle transitions (DRAFT/FINALIZED/POSTED + ADMIN reopen). | Invoice export (PDF/CSV), stronger exception approval chains, and tighter posting controls. |
 | Delivery Ops | Implemented | Daily route board, delivery task generation from subscriptions, add-ons, assignment/reassignment, run close, reconciliation, auto-assignment support, bulk pending-stop status updates, route optimization, and SLA tracking. | Richer operator UX patterns for very large route volume. |

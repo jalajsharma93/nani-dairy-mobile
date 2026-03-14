@@ -14,6 +14,7 @@ import {
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useI18n } from "@/src/state/i18n";
 import { useAuth } from "@/src/state/auth";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
@@ -25,9 +26,10 @@ const quantityLabel = (stage: ProcessingStockStage, qty: number) => {
 };
 
 export default function StockManagerScreen() {
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x } = useI18n();
-  const canManage = hasAnyRole("ADMIN", "MANAGER", "FEED_MANAGER");
+  const permissions = resolveRolePermissions(user?.role);
+  const canManage = permissions.canStock;
 
   const [date, setDate] = useState(todayLocalISO());
   const [summary, setSummary] = useState<ProcessingStockSummaryResponse | null>(null);

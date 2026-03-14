@@ -31,7 +31,7 @@ const REQUEST_TIMEOUT_MS = 15000;
 
 export type Shift = "AM" | "PM";
 export type QcStatus = "PENDING" | "PASS" | "HOLD" | "REJECT";
-export type AnimalStatus = "LACTATING" | "DRY" | "SICK" | "SOLD";
+export type AnimalStatus = "LACTATING" | "DRY" | "SICK" | "RETIRED" | "DEAD" | "SOLD";
 export type AnimalGrowthStage = "CALF" | "GROWER" | "ADULT";
 export type BreedingPregnancyResult = "PENDING" | "PREGNANT" | "NOT_PREGNANT";
 export type BreedingCalfGender = "MALE" | "FEMALE" | "UNKNOWN";
@@ -166,8 +166,30 @@ export type CreateAnimalPayload = {
   lastWeightDate?: string | null;
   weaningDate?: string | null;
   weaningWeightKg?: number | null;
+  lifecycleReason?: string | null;
 };
 export type UpdateAnimalPayload = CreateAnimalPayload;
+
+export type AnimalGenealogyResponse = {
+  animal: AnimalResponse;
+  mother?: AnimalResponse | null;
+  sire?: AnimalResponse | null;
+  offspring: AnimalResponse[];
+  offspringCount: number;
+  activeOffspringCount: number;
+};
+
+export type AnimalLifecycleEventResponse = {
+  animalLifecycleEventId: string;
+  animalId: string;
+  fromStatus?: AnimalStatus | null;
+  toStatus: AnimalStatus;
+  fromActive?: boolean | null;
+  toActive: boolean;
+  reason?: string | null;
+  changedBy?: string | null;
+  changedAt?: string | null;
+};
 
 export type EmployeeResponse = {
   employeeId: string;
@@ -1101,6 +1123,24 @@ export type SubscriptionInvoiceStatusUpdateResponse = {
   updatedBy: string;
 };
 
+export type SubscriptionInvoiceStatusAuditResponse = {
+  subscriptionInvoiceStatusAuditId: string;
+  customerId: string;
+  customerName: string;
+  customerType: CustomerType;
+  month: string;
+  invoiceNumber: string;
+  previousStatus: "DRAFT" | "FINALIZED" | "POSTED";
+  currentStatus: "DRAFT" | "FINALIZED" | "POSTED";
+  action: "FINALIZE" | "POST" | "REOPEN" | string;
+  statusNote?: string | null;
+  overrideReason?: string | null;
+  exceptionOverride: boolean;
+  approvedBy?: string | null;
+  actorUsername: string;
+  createdAt: string;
+};
+
 export type SettlementReconciliationRowResponse = {
   customerName: string;
   customerType: CustomerType;
@@ -1348,6 +1388,136 @@ export type FeedInventoryForecastResponse = {
   items: FeedInventoryForecastItemResponse[];
 };
 
+export type FeedProcurementPlanItemResponse = {
+  rank: number;
+  feedMaterialId: string;
+  materialName: string;
+  category: FeedMaterialCategory;
+  unit: FeedMaterialUnit;
+  supplierName: string;
+  availableQty: number;
+  reorderLevelQty: number;
+  daysOfStockLeft?: number | null;
+  recommendedOrderQty: number;
+  estimatedOrderCost?: number | null;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  urgencyLevel: "LOW" | "MEDIUM" | "HIGH";
+  urgencyScore: number;
+  suggestedOrderByDate?: string | null;
+  forecastBasis: "LOG_BASED" | "REORDER_LEVEL_ONLY";
+  recommendation: string;
+};
+
+export type FeedProcurementSupplierGroupResponse = {
+  supplierName: string;
+  itemsCount: number;
+  totalRecommendedQty: number;
+  totalEstimatedCost?: number | null;
+  items: FeedProcurementPlanItemResponse[];
+};
+
+export type FeedProcurementPlanResponse = {
+  date: string;
+  lookbackDays: number;
+  horizonDays: number;
+  totalMaterialsConsidered: number;
+  itemsPlanned: number;
+  highUrgencyItems: number;
+  mediumUrgencyItems: number;
+  lowUrgencyItems: number;
+  totalRecommendedQty: number;
+  totalEstimatedCost?: number | null;
+  supplierGroups: FeedProcurementSupplierGroupResponse[];
+  items: FeedProcurementPlanItemResponse[];
+};
+
+export type FeedProcurementTaskGenerationResponse = {
+  feedProcurementRunId?: string | null;
+  runMode?: "MANUAL" | "AUTOMATED" | null;
+  date: string;
+  taskDate: string;
+  lookbackDays: number;
+  horizonDays: number;
+  consideredItems: number;
+  createdTasks: number;
+  skippedTasks: number;
+  createdTaskIds: string[];
+  skippedTaskTitles: string[];
+};
+
+export type FeedProcurementRunResponse = {
+  feedProcurementRunId: string;
+  planDate: string;
+  taskDate: string;
+  runMode: "MANUAL" | "AUTOMATED";
+  lookbackDays: number;
+  horizonDays: number;
+  consideredItems: number;
+  createdTasks: number;
+  skippedTasks: number;
+  actor?: string | null;
+  notes?: string | null;
+  createdAt?: string | null;
+};
+
+export type FeedEfficiencyAnimalItemResponse = {
+  animalId: string;
+  tag?: string | null;
+  name?: string | null;
+  status?: AnimalStatus | null;
+  growthStage?: AnimalGrowthStage | null;
+  dominantRationPhase?: FeedRationPhase | null;
+  feedLogDays: number;
+  milkLogDays: number;
+  totalFeedKg: number;
+  totalMilkLiters: number;
+  avgFeedPerFeedDayKg: number;
+  avgMilkPerMilkDayLiters: number;
+  feedPerLiter?: number | null;
+  milkPerKgFeed?: number | null;
+  recent7FeedPerLiter?: number | null;
+  prior7FeedPerLiter?: number | null;
+  trend: "IMPROVING" | "DECLINING" | "STABLE" | "INSUFFICIENT_DATA";
+  efficiencyBand: "EFFICIENT" | "WATCH" | "INEFFICIENT" | "DATA_GAP";
+  anomalyCode?: string | null;
+  recommendation: string;
+};
+
+export type FeedEfficiencyPhaseSummaryResponse = {
+  rationPhase: FeedRationPhase;
+  animals: number;
+  totalFeedKg: number;
+  totalMilkLiters: number;
+  feedPerLiter?: number | null;
+  milkPerKgFeed?: number | null;
+  recommendation: string;
+};
+
+export type FeedEfficiencyInsightResponse = {
+  date: string;
+  lookbackDays: number;
+  fromDate: string;
+  animalsTracked: number;
+  animalsWithBothFeedAndMilk: number;
+  efficientAnimals: number;
+  watchAnimals: number;
+  inefficientAnimals: number;
+  dataGapAnimals: number;
+  totalFeedKg: number;
+  totalMilkLiters: number;
+  herdFeedPerLiter?: number | null;
+  herdMilkPerKgFeed?: number | null;
+  herdMedianFeedPerLiter?: number | null;
+  recent7HerdFeedPerLiter?: number | null;
+  prior7HerdFeedPerLiter?: number | null;
+  herdTrend: "IMPROVING" | "DECLINING" | "STABLE" | "INSUFFICIENT_DATA";
+  avgFeedCostPerKg?: number | null;
+  potentialFeedSavingsKg30Days: number;
+  potentialFeedCostSavings30Days: number;
+  phaseSummaries: FeedEfficiencyPhaseSummaryResponse[];
+  items: FeedEfficiencyAnimalItemResponse[];
+};
+
 export type ProcessingStockStage = "MILK" | "CURD" | "BUTTERMILK" | "GHEE";
 export type ProcessingStockTxnType =
   | "AUTO_MILK_PRODUCTION"
@@ -1463,30 +1633,78 @@ export type MedicalTreatmentResponse = {
   treatmentId: string;
   animalId: string;
   treatmentDate: string;
+  templateCode?: string | null;
+  templateTitle?: string | null;
   diagnosis: string;
   medicineName: string;
   dose?: string | null;
   route?: string | null;
   veterinarianName?: string | null;
   prescriptionPhotoUrl?: string | null;
+  prescriptionIssuedBy?: string | null;
+  prescriptionIssuedDate?: string | null;
+  prescriptionReferenceNo?: string | null;
   withdrawalTillDate?: string | null;
+  minimumWithdrawalTillDate?: string | null;
+  prescriptionRequired?: boolean | null;
+  complianceStatus?: TreatmentComplianceStatus | null;
+  complianceMessage?: string | null;
   followUpDate?: string | null;
   notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
 
+export type TreatmentComplianceStatus =
+  | "COMPLIANT"
+  | "MISSING_PRESCRIPTION"
+  | "MISSING_PRESCRIPTION_METADATA"
+  | "MISSING_WITHDRAWAL_DATE"
+  | "WITHDRAWAL_BELOW_MINIMUM";
+
+export type TreatmentTemplateResponse = {
+  templateCode: string;
+  title: string;
+  diagnosis: string;
+  medicineName: string;
+  dose?: string | null;
+  route?: string | null;
+  followUpDays?: number | null;
+  withdrawalDays?: number | null;
+  prescriptionRequired: boolean;
+  notes?: string | null;
+};
+
 export type CreateMedicalTreatmentPayload = {
   treatmentDate: string;
+  templateCode?: string | null;
   diagnosis: string;
   medicineName: string;
   dose?: string | null;
   route?: string | null;
   veterinarianName?: string | null;
   prescriptionPhotoUrl?: string | null;
+  prescriptionIssuedBy?: string | null;
+  prescriptionIssuedDate?: string | null;
+  prescriptionReferenceNo?: string | null;
   withdrawalTillDate?: string | null;
   followUpDate?: string | null;
   notes?: string | null;
+};
+
+export type TreatmentComplianceSummaryResponse = {
+  date: string;
+  scopeAnimalId?: string | null;
+  evaluatedRecords: number;
+  compliant: number;
+  missingPrescription: number;
+  missingPrescriptionMetadata: number;
+  missingWithdrawalDate: number;
+  withdrawalBelowMinimum: number;
+  activeWithdrawal: number;
+  followUpDueToday: number;
+  followUpDueSoon: number;
+  followUpOverdue: number;
 };
 
 export type HealthSummaryResponse = {
@@ -1997,6 +2215,14 @@ export const AnimalApi = {
   get: (animalId: string) =>
     http<AnimalResponse>(`${API_BASE_URL}/api/animals/${encodeURIComponent(animalId)}`),
 
+  genealogy: (animalId: string) =>
+    http<AnimalGenealogyResponse>(`${API_BASE_URL}/api/animals/${encodeURIComponent(animalId)}/genealogy`),
+
+  lifecycleHistory: (animalId: string) =>
+    http<AnimalLifecycleEventResponse[]>(
+      `${API_BASE_URL}/api/animals/${encodeURIComponent(animalId)}/lifecycle-history`
+    ),
+
   byTag: (tag: string) =>
     http<AnimalResponse>(`${API_BASE_URL}/api/animals/by-tag?tag=${encodeURIComponent(tag)}`),
 
@@ -2376,6 +2602,34 @@ export const SalesApi = {
     });
   },
 
+  exportSubscriptionInvoicesCsv: (params?: {
+    month?: string;
+    customerType?: CustomerType;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.month) search.set("month", params.month);
+    if (params?.customerType) search.set("customerType", params.customerType);
+    const query = search.toString();
+    return httpText(`${API_BASE_URL}/api/sales/subscription-invoices/export${query ? `?${query}` : ""}`, {
+      headers: {
+        Accept: "text/csv",
+      },
+    });
+  },
+
+  subscriptionInvoiceAudits: (params?: {
+    month?: string;
+    customerId?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.month) search.set("month", params.month);
+    if (params?.customerId) search.set("customerId", params.customerId);
+    const query = search.toString();
+    return http<SubscriptionInvoiceStatusAuditResponse[]>(
+      `${API_BASE_URL}/api/sales/subscription-invoice/audits${query ? `?${query}` : ""}`
+    );
+  },
+
   finalizeSubscriptionInvoice: (payload: UpdateSubscriptionInvoiceStatusPayload) =>
     http<SubscriptionInvoiceStatusUpdateResponse>(`${API_BASE_URL}/api/sales/subscription-invoice/finalize`, {
       method: "POST",
@@ -2664,6 +2918,40 @@ export const FeedManagementApi = {
       `${API_BASE_URL}/api/feed-management/forecast?date=${encodeURIComponent(date)}&lookbackDays=${lookbackDays}`
     ),
 
+  procurementPlan: (date: string, lookbackDays = 30, horizonDays = 30) =>
+    http<FeedProcurementPlanResponse>(
+      `${API_BASE_URL}/api/feed-management/procurement-plan?date=${encodeURIComponent(date)}&lookbackDays=${lookbackDays}&horizonDays=${horizonDays}`
+    ),
+
+  generateProcurementTasks: (payload: {
+    date: string;
+    lookbackDays?: number;
+    horizonDays?: number;
+    taskDate?: string;
+  }) => {
+    const search = new URLSearchParams();
+    search.set("date", payload.date);
+    if (payload.lookbackDays != null) search.set("lookbackDays", String(payload.lookbackDays));
+    if (payload.horizonDays != null) search.set("horizonDays", String(payload.horizonDays));
+    if (payload.taskDate) search.set("taskDate", payload.taskDate);
+    return http<FeedProcurementTaskGenerationResponse>(
+      `${API_BASE_URL}/api/feed-management/procurement-tasks/generate?${search.toString()}`,
+      {
+        method: "POST",
+      }
+    );
+  },
+
+  procurementTaskRuns: (limit = 20) =>
+    http<FeedProcurementRunResponse[]>(
+      `${API_BASE_URL}/api/feed-management/procurement-tasks/runs?limit=${encodeURIComponent(String(limit))}`
+    ),
+
+  efficiency: (date: string, lookbackDays = 30) =>
+    http<FeedEfficiencyInsightResponse>(
+      `${API_BASE_URL}/api/feed-management/efficiency?date=${encodeURIComponent(date)}&lookbackDays=${lookbackDays}`
+    ),
+
   listMaterials: (params?: { lowStockOnly?: boolean }) => {
     const search = new URLSearchParams();
     if (params?.lowStockOnly !== undefined) {
@@ -2926,6 +3214,22 @@ export const HealthApi = {
 };
 
 export const TreatmentApi = {
+  templates: () => http<TreatmentTemplateResponse[]>(`${API_BASE_URL}/api/treatments/templates`),
+
+  complianceSummary: (params?: { date?: string; animalId?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.date) {
+      search.set("date", params.date);
+    }
+    if (params?.animalId) {
+      search.set("animalId", params.animalId);
+    }
+    const query = search.toString();
+    return http<TreatmentComplianceSummaryResponse>(
+      `${API_BASE_URL}/api/treatments/compliance-summary${query ? `?${query}` : ""}`
+    );
+  },
+
   list: (animalId: string) =>
     http<MedicalTreatmentResponse[]>(
       `${API_BASE_URL}/api/animals/${encodeURIComponent(animalId)}/treatments`

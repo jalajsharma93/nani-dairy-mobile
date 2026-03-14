@@ -13,10 +13,11 @@ import {
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
-const STATUS_OPTIONS: AnimalStatus[] = ["LACTATING", "DRY", "SICK", "SOLD"];
+const STATUS_OPTIONS: AnimalStatus[] = ["LACTATING", "DRY", "SICK", "RETIRED", "DEAD", "SOLD"];
 const GROWTH_STAGE_OPTIONS: AnimalGrowthStage[] = ["CALF", "GROWER", "ADULT"];
 const BREED_OPTIONS = ["Gir", "Sahiwal", "Desi", "Jersey", "HF", "Buffalo", "Other"] as const;
 
@@ -35,15 +36,30 @@ function statusTone(status: AnimalStatus): Tone {
   if (status === "SICK") {
     return { text: DairyColors.danger, background: DairyColors.dangerSoft };
   }
+  if (status === "RETIRED") {
+    return { text: DairyColors.textSecondary, background: DairyColors.surfaceMuted };
+  }
+  if (status === "DEAD") {
+    return { text: "#6B7280", background: "#E5E7EB" };
+  }
   return { text: DairyColors.info, background: DairyColors.infoSoft };
+}
+
+function isTerminalStatus(status: AnimalStatus) {
+  return status === "SOLD" || status === "DEAD";
+}
+
+function isFixedInactiveStatus(status: AnimalStatus) {
+  return status === "RETIRED" || status === "SOLD" || status === "DEAD";
 }
 
 export default function AnimalsScreen() {
   const router = useRouter();
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const canAddAnimals = hasAnyRole("ADMIN");
-  const canEditAnimals = hasAnyRole("ADMIN", "MANAGER");
+  const permissions = resolveRolePermissions(user?.role);
+  const canAddAnimals = permissions.canCreateAnimal;
+  const canEditAnimals = permissions.canEditAnimal;
 
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,6 +68,7 @@ export default function AnimalsScreen() {
   const [herdProfitability, setHerdProfitability] = useState<HerdProfitabilityResponse | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingAnimalId, setEditingAnimalId] = useState<string | null>(null);
+  const [lockedLifecycleStatus, setLockedLifecycleStatus] = useState<AnimalStatus | null>(null);
   const [lookupTag, setLookupTag] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
 
@@ -111,6 +128,7 @@ export default function AnimalsScreen() {
 
   const resetForm = () => {
     setEditingAnimalId(null);
+    setLockedLifecycleStatus(null);
     setTag("");
     setName("");
     setBreed(BREED_OPTIONS[0]);
@@ -137,6 +155,7 @@ export default function AnimalsScreen() {
       return;
     }
     setEditingAnimalId(null);
+    setLockedLifecycleStatus(null);
     setTag("");
     setName("");
     setBreed(BREED_OPTIONS[0]);
@@ -270,10 +289,72 @@ export default function AnimalsScreen() {
           x("Save failed", "सेव नहीं हुआ"),
           x("This tag already exists. Please use a unique animal tag.", "यह टैग पहले से मौजूद है। नया टैग डालें।")
         );
+      } else if (message.includes("Animal tag already exists")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x("This tag already exists. Please use a unique animal tag.", "यह टैग पहले से मौजूद है। नया टैग डालें।")
+        );
       } else if (message.includes("Tag must be different from animal ID")) {
         Alert.alert(
           x("Save failed", "सेव नहीं हुआ"),
           x("Tag ID must be different from Animal ID.", "टैग आईडी और Animal ID अलग होने चाहिए।")
+        );
+      } else if (message.includes("Retired/Sold/Dead animal must be inactive")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x(
+            "Retired, sold or dead animals must be marked inactive.",
+            "रिटायर्ड, बेचे गए या मृत जानवर को inactive रखना जरूरी है।"
+          )
+        );
+      } else if (message.includes("Lactating animal must be active")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x("Lactating animals must stay active.", "दूध देने वाले जानवर को active रखना जरूरी है।")
+        );
+      } else if (message.includes("Sold/Dead lifecycle status is terminal and cannot be changed")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x(
+            "Sold or dead status is final and cannot be changed later.",
+            "बेचा गया या मृत स्थिति अंतिम है, बाद में बदली नहीं जा सकती।"
+          )
+        );
+      } else if (message.includes("Mother animal not found")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x("Mother animal reference was not found.", "मां वाले जानवर का रेफरेंस नहीं मिला।")
+        );
+      } else if (message.includes("Mother cannot be the same animal")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x("Mother cannot be same as this animal.", "मां का रेफरेंस इसी जानवर पर नहीं हो सकता।")
+        );
+      } else if (message.includes("Sire reference cannot be self") || message.includes("Sire cannot be the same animal")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x("Sire/Bull reference cannot be same as this animal.", "सायर/बैल का रेफरेंस इसी जानवर पर नहीं हो सकता।")
+        );
+      } else if (message.includes("Animal date of birth cannot be before mother date of birth")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x(
+            "Animal birth date cannot be earlier than mother birth date.",
+            "जानवर की जन्मतिथि मां की जन्मतिथि से पहले नहीं हो सकती।"
+          )
+        );
+      } else if (message.includes("Mother and sire cannot reference same animal")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x("Mother and sire cannot be same animal.", "मां और सायर एक ही जानवर नहीं हो सकते।")
+        );
+      } else if (message.includes("link creates genealogy cycle")) {
+        Alert.alert(
+          x("Save failed", "सेव नहीं हुआ"),
+          x(
+            "This parent link creates a genealogy loop. Select a different mother/sire.",
+            "यह माता-पिता लिंक वंशावली में लूप बना रहा है। अलग मां/सायर चुनें।"
+          )
         );
       } else {
         Alert.alert(x("Save failed", "सेव नहीं हुआ"), message);
@@ -292,6 +373,7 @@ export default function AnimalsScreen() {
       return;
     }
     setEditingAnimalId(animal.animalId);
+    setLockedLifecycleStatus(isTerminalStatus(animal.status) ? animal.status : null);
     setTag(animal.tag);
     setName(animal.name ?? "");
     setBreed((BREED_OPTIONS.includes(animal.breed as (typeof BREED_OPTIONS)[number]) ? animal.breed : BREED_OPTIONS[0]) as string);
@@ -307,6 +389,20 @@ export default function AnimalsScreen() {
     setWeaningDate(animal.weaningDate ?? "");
     setWeaningWeightKg(animal.weaningWeightKg == null ? "" : String(animal.weaningWeightKg));
     setShowForm(true);
+  };
+
+  const applyStatus = (nextStatus: AnimalStatus) => {
+    if (lockedLifecycleStatus && nextStatus !== lockedLifecycleStatus) {
+      return;
+    }
+    setStatus(nextStatus);
+    if (nextStatus === "LACTATING") {
+      setIsActive(true);
+      return;
+    }
+    if (isFixedInactiveStatus(nextStatus)) {
+      setIsActive(false);
+    }
   };
 
   const summary = useMemo(() => {
@@ -673,10 +769,12 @@ export default function AnimalsScreen() {
                   {STATUS_OPTIONS.map((s) => {
                     const tone = statusTone(s);
                     const selected = status === s;
+                    const lifecycleLocked = !!lockedLifecycleStatus && lockedLifecycleStatus !== s;
                     return (
                       <Pressable
                         key={s}
-                        onPress={() => setStatus(s)}
+                        disabled={lifecycleLocked}
+                        onPress={() => applyStatus(s)}
                         style={{
                           borderWidth: 1,
                           borderColor: selected ? tone.text : DairyColors.border,
@@ -684,6 +782,7 @@ export default function AnimalsScreen() {
                           borderRadius: 999,
                           paddingHorizontal: 12,
                           paddingVertical: 8,
+                          opacity: lifecycleLocked ? 0.45 : 1,
                         }}
                       >
                         <Text style={{ color: selected ? tone.text : DairyColors.textPrimary, fontWeight: "700" }}>
@@ -693,10 +792,29 @@ export default function AnimalsScreen() {
                     );
                   })}
                 </View>
+                {lockedLifecycleStatus ? (
+                  <Text style={{ marginTop: 6, color: DairyColors.warning }}>
+                    {x(
+                      "This record is in terminal lifecycle status. Status cannot be changed from sold/dead.",
+                      "यह रिकॉर्ड अंतिम जीवन-स्थिति में है। sold/dead के बाद स्थिति नहीं बदली जा सकती।"
+                    )}
+                  </Text>
+                ) : (
+                  <Text style={{ marginTop: 6, color: DairyColors.textSecondary }}>
+                    {x(
+                      "Lactating stays active. Retired/Sold/Dead stays inactive.",
+                      "Lactating सक्रिय रहता है। Retired/Sold/Dead निष्क्रिय रहते हैं।"
+                    )}
+                  </Text>
+                )}
 
                 <View style={{ marginTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                   <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{x("Active", "सक्रिय")}</Text>
-                  <Switch value={isActive} onValueChange={setIsActive} />
+                  <Switch
+                    value={isActive}
+                    disabled={status === "LACTATING" || isFixedInactiveStatus(status)}
+                    onValueChange={setIsActive}
+                  />
                 </View>
 
                 <Text style={{ marginTop: 14, color: DairyColors.textPrimary, fontWeight: "800" }}>

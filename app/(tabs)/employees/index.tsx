@@ -18,6 +18,7 @@ import {
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
@@ -123,12 +124,13 @@ function monthEndIso(month: string): string {
 }
 
 export default function EmployeesScreen() {
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x, label } = useI18n();
-  const canManageEmployees = hasAnyRole("ADMIN");
-  const canManageAttendance = hasAnyRole("ADMIN", "MANAGER");
-  const canViewPayrollAdjustments = hasAnyRole("ADMIN", "MANAGER");
-  const canManagePayrollAdjustments = hasAnyRole("ADMIN");
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageEmployees = permissions.canManageEmployees;
+  const canManageAttendance = permissions.canManageAttendance;
+  const canViewPayrollAdjustments = permissions.canViewPayrollAdjustments;
+  const canManagePayrollAdjustments = permissions.canManagePayrollAdjustments;
 
   const [employees, setEmployees] = useState<EmployeeResponse[]>([]);
   const [loading, setLoading] = useState(false);

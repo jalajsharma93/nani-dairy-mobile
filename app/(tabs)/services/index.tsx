@@ -4,6 +4,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 
 type ServiceCardProps = {
   title: string;
@@ -52,15 +53,15 @@ export default function ServicesScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
   const { t, x } = useI18n();
-  const role = user?.role;
-  const isAdmin = role === "ADMIN";
-  const canOpenClinical = role === "ADMIN" || role === "MANAGER" || role === "VET";
-  const canOpenEmployees = role === "ADMIN" || role === "MANAGER";
-  const canOpenCustomers = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
-  const canOpenDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY" || role === "WORKER";
-  const canOpenSales = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
-  const canOpenExpenses = role === "ADMIN";
-  const canOpenStock = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
+  const permissions = resolveRolePermissions(user?.role);
+  const isAdmin = permissions.isAdmin;
+  const canOpenClinical = permissions.canClinical;
+  const canOpenEmployees = permissions.canEmployees;
+  const canOpenCustomers = permissions.canCustomers;
+  const canOpenDeliveryOps = permissions.canDeliveryOps;
+  const canOpenSales = permissions.canSalesChecklist;
+  const canOpenExpenses = permissions.isAdmin;
+  const canOpenStock = permissions.canStock;
 
   return (
     <ScrollView

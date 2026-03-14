@@ -5,6 +5,7 @@ import { DairyColors } from "@/src/constants/dairy-theme";
 import { DairyTypography } from "@/src/constants/typography";
 import { useAuth } from "@/src/state/auth";
 import { useI18n } from "@/src/state/i18n";
+import { resolveRolePermissions } from "@/src/state/permissions";
 
 function tabIcon(
   name: React.ComponentProps<typeof Ionicons>["name"],
@@ -39,20 +40,20 @@ export default function TabLayout() {
     return <Redirect href="/login" />;
   }
 
-  const role = user.role;
-  const isVet = user.role === "VET";
-  const isDelivery = user.role === "DELIVERY";
-  const isFeedManager = user.role === "FEED_MANAGER";
-  const isOpsRole = user.role === "ADMIN" || user.role === "MANAGER" || user.role === "WORKER";
-  const isAdmin = role === "ADMIN";
-  const canClinical = role === "ADMIN" || role === "MANAGER" || role === "VET";
-  const canSalesChecklist = isOpsRole || isDelivery;
-  const canDeliveryOps = role === "ADMIN" || role === "MANAGER" || role === "DELIVERY" || role === "WORKER";
-  const canCustomerAccess = role === "ADMIN" || role === "MANAGER" || role === "WORKER" || role === "DELIVERY";
-  const canEmployeesAccess = role === "ADMIN" || role === "MANAGER";
-  const canStockAccess = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
-  const canTaskManager = role === "ADMIN" || role === "MANAGER" || role === "FEED_MANAGER";
-  const canWorklistAccess = role !== "DELIVERY" && role !== "VET";
+  const permissions = resolveRolePermissions(user.role);
+  const isVet = permissions.isVet;
+  const isDelivery = permissions.isDelivery;
+  const isFeedManager = permissions.isFeedManager;
+  const isOpsRole = permissions.canOpsCore;
+  const isAdmin = permissions.isAdmin;
+  const canClinical = permissions.canClinical;
+  const canSalesChecklist = permissions.canSalesChecklist;
+  const canDeliveryOps = permissions.canDeliveryOps;
+  const canCustomerAccess = permissions.canCustomers;
+  const canEmployeesAccess = permissions.canEmployees;
+  const canStockAccess = permissions.canStock;
+  const canTaskManager = permissions.canTaskManager;
+  const canWorklistAccess = permissions.canWorklist;
   const routeRoot = (() => {
     const first = pathname.split("/").filter(Boolean)[0];
     return first ?? "index";

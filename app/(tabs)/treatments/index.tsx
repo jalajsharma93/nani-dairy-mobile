@@ -8,11 +8,15 @@ import {
   AnimalResponse,
   CreateMedicalTreatmentPayload,
   MedicalTreatmentResponse,
+  TreatmentComplianceStatus,
+  TreatmentComplianceSummaryResponse,
+  TreatmentTemplateResponse,
   TreatmentApi,
   UploadApi,
 } from "@/src/services/api";
 import { DairyColors } from "@/src/constants/dairy-theme";
 import { useAuth } from "@/src/state/auth";
+import { resolveRolePermissions } from "@/src/state/permissions";
 import { shiftIsoDate, todayLocalISO } from "@/src/utils/date";
 import { useI18n } from "@/src/state/i18n";
 import { DateInput } from "../../../components/date-input";
@@ -97,6 +101,39 @@ function dueTone(status: "NO_DUE" | "DUE_TODAY" | "DUE_SOON" | "OVERDUE") {
   return { text: DairyColors.success, background: DairyColors.successSoft, label: "OK" };
 }
 
+function complianceTone(status?: TreatmentComplianceStatus | null) {
+  if (status === "MISSING_PRESCRIPTION") {
+    return {
+      text: DairyColors.warning,
+      background: DairyColors.warningSoft,
+      labelEn: "PRESCRIPTION NEEDED",
+      labelHi: "प्रिस्क्रिप्शन जरूरी",
+    };
+  }
+  if (status === "MISSING_PRESCRIPTION_METADATA") {
+    return {
+      text: DairyColors.warning,
+      background: DairyColors.warningSoft,
+      labelEn: "RX META NEEDED",
+      labelHi: "RX विवरण जरूरी",
+    };
+  }
+  if (status === "MISSING_WITHDRAWAL_DATE" || status === "WITHDRAWAL_BELOW_MINIMUM") {
+    return {
+      text: DairyColors.danger,
+      background: DairyColors.dangerSoft,
+      labelEn: "WITHDRAWAL ISSUE",
+      labelHi: "Withdrawal समस्या",
+    };
+  }
+  return {
+    text: DairyColors.success,
+    background: DairyColors.successSoft,
+    labelEn: "COMPLIANT",
+    labelHi: "कम्प्लायंट",
+  };
+}
+
 const FILTERS: DueFilter[] = ["ALL", "DUE_TODAY", "DUE_SOON", "OVERDUE"];
 
 function animalDisplayLabel(animal: AnimalResponse) {
@@ -106,15 +143,18 @@ function animalDisplayLabel(animal: AnimalResponse) {
 export default function TreatmentsScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
   const router = useRouter();
-  const { hasAnyRole } = useAuth();
+  const { user } = useAuth();
   const { x } = useI18n();
-  const canManageTreatments = hasAnyRole("ADMIN", "MANAGER", "VET");
+  const permissions = resolveRolePermissions(user?.role);
+  const canManageTreatments = permissions.canManageTreatments;
 
   const [date] = useState(todayLocalISO());
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
   const [selectedAnimalId, setSelectedAnimalId] = useState("");
   const [animalLookup, setAnimalLookup] = useState("");
   const [treatments, setTreatments] = useState<MedicalTreatmentResponse[]>([]);
+  const [complianceSummary, setComplianceSummary] = useState<TreatmentComplianceSummaryResponse | null>(null);
+  const [templates, setTemplates] = useState<TreatmentTemplateResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dueFilter, setDueFilter] = useState<DueFilter>("ALL");
@@ -145,17 +185,88 @@ export default function TreatmentsScreen() {
   const [route, setRoute] = useState("");
   const [veterinarianName, setVeterinarianName] = useState("");
   const [prescriptionPhotoUrl, setPrescriptionPhotoUrl] = useState("");
+  const [prescriptionIssuedBy, setPrescriptionIssuedBy] = useState("");
+  const [prescriptionIssuedDate, setPrescriptionIssuedDate] = useState("");
+  const [prescriptionReferenceNo, setPrescriptionReferenceNo] = useState("");
   const [prescriptionUploadUri, setPrescriptionUploadUri] = useState("");
   const [withdrawalTillDate, setWithdrawalTillDate] = useState("");
   const [followUpDate, setFollowUpDate] = useState("");
   const [autoFollowUpHintDays, setAutoFollowUpHintDays] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
   const [uploadingPrescription, setUploadingPrescription] = useState(false);
+  const [selectedTemplateCode, setSelectedTemplateCode] = useState("");
 
   const selectedAnimal = useMemo(
     () => animals.find((a) => a.animalId === selectedAnimalId) ?? null,
     [animals, selectedAnimalId]
   );
+
+  const selectedTemplate = useMemo(
+    () =>
+      templates.find(
+        (row) => row.templateCode.toLowerCase() === selectedTemplateCode.trim().toLowerCase()
+      ) ?? null,
+    [selectedTemplateCode, templates]
+  );
+
+  const minimumTemplateWithdrawalDate = useMemo(() => {
+    if (!selectedTemplate?.withdrawalDays || selectedTemplate.withdrawalDays <= 0) {
+      return null;
+    }
+    return addDaysIso(treatmentDate.trim(), selectedTemplate.withdrawalDays);
+  }, [selectedTemplate, treatmentDate]);
+
+  const formCompliancePreview = useMemo(() => {
+    if (!selectedTemplate) {
+      return null;
+    }
+    const photoUrl = prescriptionPhotoUrl.trim();
+    const issuedBy = prescriptionIssuedBy.trim();
+    const issuedDate = prescriptionIssuedDate.trim();
+    const withdrawalDate = withdrawalTillDate.trim();
+    if (selectedTemplate.prescriptionRequired && !photoUrl) {
+      return {
+        status: "MISSING_PRESCRIPTION" as TreatmentComplianceStatus,
+        messageEn: "Prescription evidence is required before save.",
+        messageHi: "सेव से पहले प्रिस्क्रिप्शन प्रमाण जरूरी है।",
+      };
+    }
+    if (selectedTemplate.prescriptionRequired && (!issuedBy || !issuedDate)) {
+      return {
+        status: "MISSING_PRESCRIPTION_METADATA" as TreatmentComplianceStatus,
+        messageEn: "Prescription issuer and issue date are required before save.",
+        messageHi: "सेव से पहले प्रिस्क्रिप्शन जारी करने वाले का नाम और तारीख जरूरी है।",
+      };
+    }
+    if (selectedTemplate.withdrawalDays && selectedTemplate.withdrawalDays > 0) {
+      if (!withdrawalDate) {
+        return {
+          status: "MISSING_WITHDRAWAL_DATE" as TreatmentComplianceStatus,
+          messageEn: "Withdrawal end date is required before save.",
+          messageHi: "सेव से पहले Withdrawal समाप्ति तारीख जरूरी है।",
+        };
+      }
+      if (minimumTemplateWithdrawalDate && withdrawalDate < minimumTemplateWithdrawalDate) {
+        return {
+          status: "WITHDRAWAL_BELOW_MINIMUM" as TreatmentComplianceStatus,
+          messageEn: `Withdrawal date should be on or after ${minimumTemplateWithdrawalDate}.`,
+          messageHi: `Withdrawal तारीख ${minimumTemplateWithdrawalDate} या उसके बाद होनी चाहिए।`,
+        };
+      }
+    }
+    return {
+      status: "COMPLIANT" as TreatmentComplianceStatus,
+      messageEn: "Template compliance is valid.",
+      messageHi: "टेम्पलेट कम्प्लायंस सही है।",
+    };
+  }, [
+    minimumTemplateWithdrawalDate,
+    prescriptionPhotoUrl,
+    prescriptionIssuedBy,
+    prescriptionIssuedDate,
+    selectedTemplate,
+    withdrawalTillDate,
+  ]);
 
   const activeWithdrawalRows = useMemo(
     () =>
@@ -170,6 +281,7 @@ export default function TreatmentsScreen() {
 
   const resetForm = () => {
     setEditingTreatmentId(null);
+    setSelectedTemplateCode("");
     setTreatmentDate(todayLocalISO());
     setDiagnosis("");
     setMedicineName("");
@@ -177,6 +289,9 @@ export default function TreatmentsScreen() {
     setRoute("");
     setVeterinarianName("");
     setPrescriptionPhotoUrl("");
+    setPrescriptionIssuedBy("");
+    setPrescriptionIssuedDate("");
+    setPrescriptionReferenceNo("");
     setPrescriptionUploadUri("");
     setWithdrawalTillDate("");
     setFollowUpDate("");
@@ -196,6 +311,29 @@ export default function TreatmentsScreen() {
     }
     setFollowUpDate(next);
     setAutoFollowUpHintDays(resolvedDays);
+  };
+
+  const applyTemplate = (template: TreatmentTemplateResponse) => {
+    setSelectedTemplateCode(template.templateCode);
+    setDiagnosis(template.diagnosis ?? "");
+    setMedicineName(template.medicineName ?? "");
+    setDose(template.dose ?? "");
+    setRoute(template.route ?? "");
+
+    if (template.followUpDays && template.followUpDays > 0) {
+      const nextFollowUp = addDaysIso(treatmentDate.trim(), template.followUpDays);
+      if (nextFollowUp) {
+        setFollowUpDate(nextFollowUp);
+        setAutoFollowUpHintDays(template.followUpDays);
+      }
+    }
+
+    if (template.withdrawalDays && template.withdrawalDays > 0) {
+      const nextWithdrawal = addDaysIso(treatmentDate.trim(), template.withdrawalDays);
+      if (nextWithdrawal) {
+        setWithdrawalTillDate(nextWithdrawal);
+      }
+    }
   };
 
   const uploadPrescriptionFromUri = async () => {
@@ -240,16 +378,26 @@ export default function TreatmentsScreen() {
   const loadTreatments = useCallback(async (animalId: string) => {
     if (!animalId) {
       setTreatments([]);
+      setComplianceSummary(null);
       return;
     }
-    setTreatments(await TreatmentApi.list(animalId));
-  }, []);
+    const [treatmentRows, summary] = await Promise.all([
+      TreatmentApi.list(animalId),
+      TreatmentApi.complianceSummary({ date, animalId }),
+    ]);
+    setTreatments(treatmentRows);
+    setComplianceSummary(summary);
+  }, [date]);
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const animalRows = await AnimalApi.list({ active: true });
+      const [animalRows, templateRows] = await Promise.all([
+        AnimalApi.list({ active: true }),
+        TreatmentApi.templates(),
+      ]);
       setAnimals(animalRows);
+      setTemplates(templateRows);
 
       const requestedAnimalId = (params.animalId ?? "").trim().toLowerCase();
       const requestedTag = (params.tag ?? "").trim().toLowerCase();
@@ -382,6 +530,13 @@ export default function TreatmentsScreen() {
       );
       return;
     }
+    if (prescriptionIssuedDate.trim() && !isIsoDate(prescriptionIssuedDate.trim())) {
+      Alert.alert(
+        x("Invalid date", "गलत तारीख"),
+        x("Prescription issue date must be in YYYY-MM-DD format.", "प्रिस्क्रिप्शन जारी तारीख YYYY-MM-DD फॉर्मेट में होनी चाहिए।")
+      );
+      return;
+    }
 
     if (followUpDate.trim() && followUpDate.trim() < treatmentDate.trim()) {
       Alert.alert(
@@ -407,15 +562,64 @@ export default function TreatmentsScreen() {
       );
       return;
     }
+    if (selectedTemplate?.prescriptionRequired && !photoUrl) {
+      Alert.alert(
+        x("Prescription required", "प्रिस्क्रिप्शन जरूरी"),
+        x(
+          "Selected protocol requires prescription evidence before save.",
+          "चुने गए प्रोटोकॉल में सेव से पहले प्रिस्क्रिप्शन प्रमाण जरूरी है।"
+        )
+      );
+      return;
+    }
+    if (selectedTemplate?.prescriptionRequired && (!prescriptionIssuedBy.trim() || !prescriptionIssuedDate.trim())) {
+      Alert.alert(
+        x("Prescription metadata required", "प्रिस्क्रिप्शन विवरण जरूरी"),
+        x(
+          "Add prescription issued-by and issue date before save.",
+          "सेव से पहले प्रिस्क्रिप्शन जारी करने वाले का नाम और तारीख भरें।"
+        )
+      );
+      return;
+    }
+    if (selectedTemplate?.withdrawalDays && selectedTemplate.withdrawalDays > 0) {
+      if (!withdrawalTillDate.trim()) {
+        Alert.alert(
+          x("Withdrawal date required", "Withdrawal तारीख जरूरी"),
+          x(
+            "Selected protocol requires withdrawal end date.",
+            "चुने गए प्रोटोकॉल में Withdrawal समाप्ति तारीख जरूरी है।"
+          )
+        );
+        return;
+      }
+      if (
+        minimumTemplateWithdrawalDate &&
+        withdrawalTillDate.trim() < minimumTemplateWithdrawalDate
+      ) {
+        Alert.alert(
+          x("Withdrawal date too early", "Withdrawal तारीख बहुत जल्दी"),
+          x(
+            `Withdrawal date should be on or after ${minimumTemplateWithdrawalDate}.`,
+            `Withdrawal तारीख ${minimumTemplateWithdrawalDate} या उसके बाद होनी चाहिए।`
+          )
+        );
+        return;
+      }
+    }
 
     const payload: CreateMedicalTreatmentPayload = {
       treatmentDate: treatmentDate.trim(),
+      templateCode: selectedTemplateCode.trim() || null,
       diagnosis: diagnosis.trim(),
       medicineName: medicineName.trim(),
       dose: dose.trim() || null,
       route: route.trim() || null,
       veterinarianName: veterinarianName.trim() || null,
       prescriptionPhotoUrl: photoUrl || null,
+      prescriptionIssuedBy: prescriptionIssuedBy.trim() || null,
+      prescriptionIssuedDate: prescriptionIssuedDate.trim() || null,
+      prescriptionReferenceNo: prescriptionReferenceNo.trim() || null,
       withdrawalTillDate: withdrawalTillDate.trim() || null,
       followUpDate: followUpDate.trim() || null,
       notes: notes.trim() || null,
@@ -444,6 +648,48 @@ export default function TreatmentsScreen() {
             "Only ADMIN, MANAGER or VET users can log treatments.",
             "ट्रीटमेंट रिकॉर्ड सिर्फ ADMIN, MANAGER या VET जोड़ सकते हैं।"
           )
+        );
+      } else if (message.includes("Prescription evidence is required for this treatment")) {
+        Alert.alert(
+          x("Prescription required", "प्रिस्क्रिप्शन जरूरी"),
+          x(
+            "Prescription evidence is required for this treatment protocol.",
+            "इस ट्रीटमेंट प्रोटोकॉल के लिए प्रिस्क्रिप्शन प्रमाण जरूरी है।"
+          )
+        );
+      } else if (message.includes("Prescription issuer and issue date are required")) {
+        Alert.alert(
+          x("Prescription metadata required", "प्रिस्क्रिप्शन विवरण जरूरी"),
+          x(
+            "Add prescription issuer and issue date before save.",
+            "सेव से पहले प्रिस्क्रिप्शन जारीकर्ता और जारी तारीख भरें।"
+          )
+        );
+      } else if (message.includes("Withdrawal end date is required for this treatment")) {
+        Alert.alert(
+          x("Withdrawal date required", "Withdrawal तारीख जरूरी"),
+          x(
+            "Set withdrawal end date before saving.",
+            "सेव करने से पहले Withdrawal समाप्ति तारीख भरें।"
+          )
+        );
+      } else if (message.includes("Withdrawal end date must be on or after")) {
+        Alert.alert(
+          x("Withdrawal date too early", "Withdrawal तारीख बहुत जल्दी"),
+          x(
+            "Withdrawal date is earlier than required minimum.",
+            "Withdrawal तारीख जरूरी न्यूनतम तारीख से पहले है।"
+          )
+        );
+      } else if (message.includes("Unknown treatment templateCode")) {
+        Alert.alert(
+          x("Invalid template", "गलत टेम्पलेट"),
+          x("Selected protocol template is not valid anymore.", "चुना गया प्रोटोकॉल टेम्पलेट अब मान्य नहीं है।")
+        );
+      } else if (message.includes("Animal not found for animalId") || message.includes("HTTP 404")) {
+        Alert.alert(
+          x("Animal not found", "जानवर नहीं मिला"),
+          x("Please reselect animal and try again.", "कृपया जानवर दोबारा चुनकर कोशिश करें।")
         );
       } else if (shouldQueueForOffline(e)) {
         await queueTreatmentSave(
@@ -481,6 +727,7 @@ export default function TreatmentsScreen() {
     }
 
     setEditingTreatmentId(row.treatmentId);
+    setSelectedTemplateCode(row.templateCode ?? "");
     setTreatmentDate(row.treatmentDate);
     setDiagnosis(row.diagnosis ?? "");
     setMedicineName(row.medicineName ?? "");
@@ -488,6 +735,9 @@ export default function TreatmentsScreen() {
     setRoute(row.route ?? "");
     setVeterinarianName(row.veterinarianName ?? "");
     setPrescriptionPhotoUrl(row.prescriptionPhotoUrl ?? "");
+    setPrescriptionIssuedBy(row.prescriptionIssuedBy ?? "");
+    setPrescriptionIssuedDate(row.prescriptionIssuedDate ?? "");
+    setPrescriptionReferenceNo(row.prescriptionReferenceNo ?? "");
     setPrescriptionUploadUri("");
     setWithdrawalTillDate(row.withdrawalTillDate ?? "");
     setFollowUpDate(row.followUpDate ?? "");
@@ -764,6 +1014,41 @@ export default function TreatmentsScreen() {
         </View>
       ) : null}
 
+      {complianceSummary ? (
+        <View
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 12,
+            backgroundColor: DairyColors.surface,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Compliance Summary", "कम्प्लायंस सारांश")}
+          </Text>
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `Records ${complianceSummary.evaluatedRecords} | Compliant ${complianceSummary.compliant} | Missing Rx ${complianceSummary.missingPrescription}`,
+              `रिकॉर्ड ${complianceSummary.evaluatedRecords} | कम्प्लायंट ${complianceSummary.compliant} | Rx नहीं ${complianceSummary.missingPrescription}`
+            )}
+          </Text>
+          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+            {x(
+              `Rx metadata ${complianceSummary.missingPrescriptionMetadata} | Missing withdrawal ${complianceSummary.missingWithdrawalDate} | Low withdrawal ${complianceSummary.withdrawalBelowMinimum}`,
+              `Rx विवरण ${complianceSummary.missingPrescriptionMetadata} | Withdrawal नहीं ${complianceSummary.missingWithdrawalDate} | Withdrawal कम ${complianceSummary.withdrawalBelowMinimum}`
+            )}
+          </Text>
+          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+            {x(
+              `Follow-up today ${complianceSummary.followUpDueToday} | Soon ${complianceSummary.followUpDueSoon} | Overdue ${complianceSummary.followUpOverdue}`,
+              `फॉलो-अप आज ${complianceSummary.followUpDueToday} | जल्द ${complianceSummary.followUpDueSoon} | बाकी ${complianceSummary.followUpOverdue}`
+            )}
+          </Text>
+        </View>
+      ) : null}
+
       <View
         style={{
           marginTop: 12,
@@ -783,6 +1068,122 @@ export default function TreatmentsScreen() {
           {x("Selected animal", "चुना गया जानवर")}:{" "}
           {selectedAnimal ? animalDisplayLabel(selectedAnimal) : x("None", "कोई नहीं")}
         </Text>
+
+        <View style={{ marginTop: 10 }}>
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Protocol Template", "प्रोटोकॉल टेम्पलेट")}
+          </Text>
+          <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {templates.map((template) => {
+              const isSelected =
+                selectedTemplateCode.trim().toLowerCase() ===
+                template.templateCode.toLowerCase();
+              return (
+                <Pressable
+                  key={template.templateCode}
+                  onPress={() => applyTemplate(template)}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: isSelected ? DairyColors.primary : DairyColors.border,
+                    backgroundColor: isSelected ? DairyColors.primarySoft : DairyColors.surface,
+                    borderRadius: 999,
+                    paddingHorizontal: 11,
+                    paddingVertical: 7,
+                  }}
+                >
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                    {template.title}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {selectedTemplate ? (
+            <View
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: DairyColors.border,
+                backgroundColor: DairyColors.surfaceMuted,
+                borderRadius: 10,
+                padding: 10,
+              }}
+            >
+              <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+                {selectedTemplate.title}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Medicine: ${selectedTemplate.medicineName} | Follow-up +${selectedTemplate.followUpDays ?? 0} days`,
+                  `दवा: ${selectedTemplate.medicineName} | फॉलो-अप +${selectedTemplate.followUpDays ?? 0} दिन`
+                )}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(
+                  `Withdrawal +${selectedTemplate.withdrawalDays ?? 0} days | Prescription ${selectedTemplate.prescriptionRequired ? "required" : "optional"}`,
+                  `Withdrawal +${selectedTemplate.withdrawalDays ?? 0} दिन | प्रिस्क्रिप्शन ${selectedTemplate.prescriptionRequired ? "जरूरी" : "वैकल्पिक"}`
+                )}
+              </Text>
+              {selectedTemplate.notes ? (
+                <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                  {selectedTemplate.notes}
+                </Text>
+              ) : null}
+              <Pressable
+                onPress={() => setSelectedTemplateCode("")}
+                style={{
+                  marginTop: 8,
+                  alignSelf: "flex-start",
+                  borderWidth: 1,
+                  borderColor: DairyColors.border,
+                  borderRadius: 8,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  backgroundColor: DairyColors.surface,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {x("Clear Template", "टेम्पलेट हटाएं")}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {formCompliancePreview ? (
+            <View
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: complianceTone(formCompliancePreview.status).text,
+                borderRadius: 10,
+                backgroundColor: complianceTone(formCompliancePreview.status).background,
+                padding: 10,
+              }}
+            >
+              <Text
+                style={{
+                  color: complianceTone(formCompliancePreview.status).text,
+                  fontWeight: "800",
+                }}
+              >
+                {x(
+                  complianceTone(formCompliancePreview.status).labelEn,
+                  complianceTone(formCompliancePreview.status).labelHi
+                )}
+              </Text>
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                {x(formCompliancePreview.messageEn, formCompliancePreview.messageHi)}
+              </Text>
+              {minimumTemplateWithdrawalDate ? (
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Minimum withdrawal till date: ${minimumTemplateWithdrawalDate}`,
+                    `न्यूनतम Withdrawal समाप्ति तारीख: ${minimumTemplateWithdrawalDate}`
+                  )}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
 
         <View style={{ marginTop: 8 }}>
           <DateInput
@@ -992,6 +1393,47 @@ export default function TreatmentsScreen() {
           )}
         </Text>
 
+        <View style={{ marginTop: 8, flexDirection: "row", gap: 8 }}>
+          <TextInput
+            value={prescriptionIssuedBy}
+            onChangeText={setPrescriptionIssuedBy}
+            placeholder={x("Prescription Issued By", "प्रिस्क्रिप्शन जारीकर्ता")}
+            placeholderTextColor="#99A99A"
+            style={{
+              flex: 1,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              borderRadius: 10,
+              padding: 10,
+              color: DairyColors.textPrimary,
+              backgroundColor: DairyColors.surfaceMuted,
+            }}
+          />
+          <View style={{ flex: 1 }}>
+            <DateInput
+              value={prescriptionIssuedDate}
+              onChangeText={setPrescriptionIssuedDate}
+              placeholder={x("Issue Date (YYYY-MM-DD)", "जारी तारीख (YYYY-MM-DD)")}
+            />
+          </View>
+        </View>
+
+        <TextInput
+          value={prescriptionReferenceNo}
+          onChangeText={setPrescriptionReferenceNo}
+          placeholder={x("Prescription Reference No (optional)", "प्रिस्क्रिप्शन रेफरेंस नं (वैकल्पिक)")}
+          placeholderTextColor="#99A99A"
+          style={{
+            marginTop: 8,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 10,
+            padding: 10,
+            color: DairyColors.textPrimary,
+            backgroundColor: DairyColors.surfaceMuted,
+          }}
+        />
+
         <TextInput
           value={notes}
           onChangeText={setNotes}
@@ -1095,6 +1537,7 @@ export default function TreatmentsScreen() {
           filteredTreatments.map((row) => {
             const due = dueTone(classifyDue(row.followUpDate, date));
             const withdrawalActive = !!row.withdrawalTillDate && row.withdrawalTillDate >= date;
+            const compliance = complianceTone(row.complianceStatus);
             return (
               <View
                 key={row.treatmentId}
@@ -1136,17 +1579,50 @@ export default function TreatmentsScreen() {
                         </Text>
                       </View>
                     ) : null}
+                    <View
+                      style={{
+                        borderRadius: 999,
+                        backgroundColor: compliance.background,
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                      }}
+                    >
+                      <Text style={{ color: compliance.text, fontWeight: "700" }}>
+                        {x(compliance.labelEn, compliance.labelHi)}
+                      </Text>
+                    </View>
                   </View>
                 </View>
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(`Treatment: ${row.treatmentDate} | Follow-up: ${row.followUpDate ?? "-"}`, `ट्रीटमेंट: ${row.treatmentDate} | फॉलो-अप: ${row.followUpDate ?? "-"}`)}
                 </Text>
+                {row.templateCode || row.templateTitle ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Protocol: ${row.templateTitle ?? row.templateCode}`,
+                      `प्रोटोकॉल: ${row.templateTitle ?? row.templateCode}`
+                    )}
+                  </Text>
+                ) : null}
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(`Dose: ${row.dose ?? "-"} | Route: ${row.route ?? "-"}`, `डोज: ${row.dose ?? "-"} | रूट: ${row.route ?? "-"}`)}
                 </Text>
                 <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                   {x(`Withdrawal till: ${row.withdrawalTillDate ?? "-"}`, `विथड्रॉल अंत: ${row.withdrawalTillDate ?? "-"}`)}
                 </Text>
+                {row.minimumWithdrawalTillDate ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Minimum withdrawal date: ${row.minimumWithdrawalTillDate}`,
+                      `न्यूनतम withdrawal तारीख: ${row.minimumWithdrawalTillDate}`
+                    )}
+                  </Text>
+                ) : null}
+                {row.complianceMessage && row.complianceStatus !== "COMPLIANT" ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.danger }}>
+                    {row.complianceMessage}
+                  </Text>
+                ) : null}
                 {row.prescriptionPhotoUrl ? (
                   <Pressable
                     onPress={() => {
@@ -1173,6 +1649,19 @@ export default function TreatmentsScreen() {
                       {x("Open Prescription Photo", "प्रिस्क्रिप्शन फोटो खोलें")}
                     </Text>
                   </Pressable>
+                ) : null}
+                {row.prescriptionIssuedBy || row.prescriptionIssuedDate ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(
+                      `Prescription: ${row.prescriptionIssuedBy ?? "-"} | Date: ${row.prescriptionIssuedDate ?? "-"}`,
+                      `प्रिस्क्रिप्शन: ${row.prescriptionIssuedBy ?? "-"} | तारीख: ${row.prescriptionIssuedDate ?? "-"}`
+                    )}
+                  </Text>
+                ) : null}
+                {row.prescriptionReferenceNo ? (
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {x(`Rx Ref: ${row.prescriptionReferenceNo}`, `Rx Ref: ${row.prescriptionReferenceNo}`)}
+                  </Text>
                 ) : null}
                 {row.veterinarianName ? (
                   <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>

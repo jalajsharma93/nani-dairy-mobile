@@ -213,6 +213,8 @@ const labelMap = {
       LACTATING: "Lactating",
       DRY: "Dry",
       SICK: "Sick",
+      RETIRED: "Retired",
+      DEAD: "Dead",
       SOLD: "Sold",
     },
     employeeType: {
@@ -306,6 +308,8 @@ const labelMap = {
       LACTATING: "दूध दे रहा",
       DRY: "सूखा",
       SICK: "बीमार",
+      RETIRED: "रिटायर्ड",
+      DEAD: "मृत",
       SOLD: "बेचा गया",
     },
     employeeType: {
