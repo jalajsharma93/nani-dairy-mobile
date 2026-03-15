@@ -86,6 +86,7 @@ export default function AnimalsScreen() {
   const [lastWeightDate, setLastWeightDate] = useState("");
   const [weaningDate, setWeaningDate] = useState("");
   const [weaningWeightKg, setWeaningWeightKg] = useState("");
+  const [lifecycleReason, setLifecycleReason] = useState("");
 
   const loadHerdProfitability = useCallback(async () => {
     try {
@@ -126,6 +127,37 @@ export default function AnimalsScreen() {
     loadAnimals();
   }, [loadAnimals]);
 
+  const editingAnimal = useMemo(
+    () => (editingAnimalId ? animals.find((row) => row.animalId === editingAnimalId) ?? null : null),
+    [animals, editingAnimalId]
+  );
+
+  const normalizedMotherRef = motherAnimalId.trim().toLowerCase();
+  const matchedMother = useMemo(
+    () =>
+      normalizedMotherRef
+        ? animals.find(
+            (row) =>
+              row.animalId.trim().toLowerCase() === normalizedMotherRef ||
+              row.tag.trim().toLowerCase() === normalizedMotherRef
+          ) ?? null
+        : null,
+    [animals, normalizedMotherRef]
+  );
+
+  const normalizedSireRef = sireTag.trim().toLowerCase();
+  const matchedSire = useMemo(
+    () =>
+      normalizedSireRef
+        ? animals.find(
+            (row) =>
+              row.animalId.trim().toLowerCase() === normalizedSireRef ||
+              row.tag.trim().toLowerCase() === normalizedSireRef
+          ) ?? null
+        : null,
+    [animals, normalizedSireRef]
+  );
+
   const resetForm = () => {
     setEditingAnimalId(null);
     setLockedLifecycleStatus(null);
@@ -143,6 +175,7 @@ export default function AnimalsScreen() {
     setLastWeightDate("");
     setWeaningDate("");
     setWeaningWeightKg("");
+    setLifecycleReason("");
     setShowForm(false);
   };
 
@@ -170,6 +203,7 @@ export default function AnimalsScreen() {
     setLastWeightDate("");
     setWeaningDate("");
     setWeaningWeightKg("");
+    setLifecycleReason("");
     setShowForm(true);
   };
 
@@ -243,6 +277,62 @@ export default function AnimalsScreen() {
       return;
     }
 
+    const lifecycleNote = lifecycleReason.trim();
+    const lifecycleChanged =
+      !!editingAnimal && (editingAnimal.status !== status || editingAnimal.isActive !== isActive);
+    if ((lifecycleChanged || isFixedInactiveStatus(status)) && !lifecycleNote) {
+      Alert.alert(
+        x("Lifecycle reason required", "लाइफसाइकिल कारण जरूरी"),
+        x(
+          "Add lifecycle reason when status/active state changes (required for retired/sold/dead).",
+          "स्थिति/सक्रियता बदलने पर कारण भरें (retired/sold/dead के लिए जरूरी)।"
+        )
+      );
+      return;
+    }
+
+    const normalizedMotherRaw = motherAnimalId.trim();
+    if (normalizedMotherRaw && !matchedMother) {
+      Alert.alert(
+        x("Mother not found", "मां नहीं मिली"),
+        x(
+          "Mother reference is not found in herd records. Use valid animal ID or tag.",
+          "मां का रेफरेंस herd रिकॉर्ड में नहीं मिला। सही animal ID या tag डालें।"
+        )
+      );
+      return;
+    }
+    const normalizedSireRaw = sireTag.trim();
+
+    const resolvedMotherId = normalizedMotherRaw
+      ? matchedMother
+        ? matchedMother.animalId
+        : normalizedMotherRaw
+      : null;
+    const resolvedSireTag = normalizedSireRaw
+      ? matchedSire
+        ? matchedSire.tag
+        : normalizedSireRaw
+      : null;
+    if (editingAnimalId && resolvedMotherId && resolvedMotherId.toLowerCase() === editingAnimalId.toLowerCase()) {
+      Alert.alert(
+        x("Invalid parentage", "गलत माता-पिता लिंक"),
+        x("Mother cannot be the same animal.", "मां का रेफरेंस इसी जानवर पर नहीं हो सकता।")
+      );
+      return;
+    }
+    if (
+      editingAnimalId &&
+      matchedSire?.animalId &&
+      matchedSire.animalId.toLowerCase() === editingAnimalId.toLowerCase()
+    ) {
+      Alert.alert(
+        x("Invalid parentage", "गलत माता-पिता लिंक"),
+        x("Sire/Bull cannot be the same animal.", "सायर/बैल का रेफरेंस इसी जानवर पर नहीं हो सकता।")
+      );
+      return;
+    }
+
     try {
       setSaving(true);
       const payload = {
@@ -251,8 +341,8 @@ export default function AnimalsScreen() {
         breed,
         status,
         isActive,
-        motherAnimalId: motherAnimalId.trim() || null,
-        sireTag: sireTag.trim() || null,
+        motherAnimalId: resolvedMotherId,
+        sireTag: resolvedSireTag,
         dateOfBirth: dob,
         growthStage: growthStage || null,
         birthWeightKg: birthWeight,
@@ -260,6 +350,7 @@ export default function AnimalsScreen() {
         lastWeightDate: lastWtDate,
         weaningDate: weanDate,
         weaningWeightKg: weaningWeight,
+        lifecycleReason: lifecycleNote || null,
       };
       if (editingAnimalId) {
         await AnimalApi.update(editingAnimalId, payload);
@@ -388,6 +479,7 @@ export default function AnimalsScreen() {
     setLastWeightDate(animal.lastWeightDate ?? "");
     setWeaningDate(animal.weaningDate ?? "");
     setWeaningWeightKg(animal.weaningWeightKg == null ? "" : String(animal.weaningWeightKg));
+    setLifecycleReason("");
     setShowForm(true);
   };
 
@@ -817,6 +909,34 @@ export default function AnimalsScreen() {
                   />
                 </View>
 
+                <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
+                  {x("Lifecycle Reason", "लाइफसाइकिल कारण")}
+                </Text>
+                <TextInput
+                  style={{
+                    marginTop: 6,
+                    borderWidth: 1,
+                    borderColor: DairyColors.border,
+                    borderRadius: 10,
+                    padding: 11,
+                    color: DairyColors.textPrimary,
+                    backgroundColor: DairyColors.surfaceMuted,
+                  }}
+                  placeholder={x(
+                    "Required for status/active transition",
+                    "स्थिति/सक्रियता बदलाव पर जरूरी"
+                  )}
+                  placeholderTextColor="#99A99A"
+                  value={lifecycleReason}
+                  onChangeText={setLifecycleReason}
+                />
+                <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                  {x(
+                    "Use a short reason (for example: sold to nearby farm, retired due to age, health issue).",
+                    "संक्षिप्त कारण लिखें (जैसे: पास के फार्म में बिक्री, उम्र के कारण रिटायर, स्वास्थ्य समस्या)।"
+                  )}
+                </Text>
+
                 <Text style={{ marginTop: 14, color: DairyColors.textPrimary, fontWeight: "800" }}>
                   {x("Parentage and Growth (Optional)", "माता-पिता और ग्रोथ (वैकल्पिक)")}
                 </Text>
@@ -839,6 +959,37 @@ export default function AnimalsScreen() {
                   value={motherAnimalId}
                   onChangeText={setMotherAnimalId}
                 />
+                {motherAnimalId.trim() ? (
+                  matchedMother ? (
+                    <Pressable
+                      onPress={() => openAnimalDetails(matchedMother.animalId)}
+                      style={{
+                        marginTop: 6,
+                        alignSelf: "flex-start",
+                        borderWidth: 1,
+                        borderColor: DairyColors.success,
+                        borderRadius: 999,
+                        backgroundColor: DairyColors.successSoft,
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text style={{ color: DairyColors.success, fontWeight: "700" }}>
+                        {x(
+                          `Matched: ${matchedMother.tag} (${matchedMother.animalId})`,
+                          `मिलान: ${matchedMother.tag} (${matchedMother.animalId})`
+                        )}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <Text style={{ marginTop: 6, color: DairyColors.warning }}>
+                      {x(
+                        "No herd match for this mother reference.",
+                        "इस मां रेफरेंस का herd रिकॉर्ड में मिलान नहीं मिला।"
+                      )}
+                    </Text>
+                  )
+                ) : null}
 
                 <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
                   {x("Sire/Bull Tag", "बैल/सायर टैग")}
@@ -858,6 +1009,28 @@ export default function AnimalsScreen() {
                   value={sireTag}
                   onChangeText={setSireTag}
                 />
+                {sireTag.trim() && matchedSire ? (
+                  <Pressable
+                    onPress={() => openAnimalDetails(matchedSire.animalId)}
+                    style={{
+                      marginTop: 6,
+                      alignSelf: "flex-start",
+                      borderWidth: 1,
+                      borderColor: DairyColors.info,
+                      borderRadius: 999,
+                      backgroundColor: DairyColors.infoSoft,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.info, fontWeight: "700" }}>
+                      {x(
+                        `Matched in herd: ${matchedSire.tag} (${matchedSire.animalId})`,
+                        `हर्ड में मिलान: ${matchedSire.tag} (${matchedSire.animalId})`
+                      )}
+                    </Text>
+                  </Pressable>
+                ) : null}
 
                 <Text style={{ marginTop: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
                   {x("Date of Birth (YYYY-MM-DD)", "जन्मतिथि (YYYY-MM-DD)")}
