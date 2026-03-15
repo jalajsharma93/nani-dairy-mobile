@@ -246,6 +246,7 @@ export type EmployeeAttendanceResponse = {
 };
 
 export type SalaryComputationMode = "NONE" | "DAILY" | "SHIFT" | "HOURLY" | "DAILY_PLUS_OVERTIME";
+export type EmployeeMonthlyPayoutStatus = "PENDING" | "APPROVED" | "PAID";
 
 export type UpsertEmployeeAttendancePayload = {
   employeeId: string;
@@ -281,6 +282,13 @@ export type EmployeeAttendanceMonthlyRowResponse = {
   deductionAmount: number;
   grossSalary: number;
   netPayableSalary: number;
+  payoutId?: string | null;
+  payoutStatus?: EmployeeMonthlyPayoutStatus | null;
+  paidAmount?: number | null;
+  pendingAmount?: number | null;
+  payoutPaymentMode?: PaymentMode | null;
+  payoutReferenceNo?: string | null;
+  payoutUpdatedAt?: string | null;
 };
 
 export type EmployeeAttendanceMonthlyReportResponse = {
@@ -326,6 +334,66 @@ export type EmployeeAttendanceMonthlyReportParams = {
   hourlyRate?: number | null;
   overtimeHourlyRate?: number | null;
   standardHoursPerDay?: number | null;
+};
+
+export type EmployeeMonthlyPayoutResponse = {
+  payoutId: string;
+  month: string;
+  employeeId: string;
+  employeeName?: string | null;
+  payoutStatus: EmployeeMonthlyPayoutStatus;
+  netPayableSalary: number;
+  paidAmount: number;
+  pendingAmount: number;
+  paymentMode?: PaymentMode | null;
+  paymentReferenceNo?: string | null;
+  notes?: string | null;
+  approvedByUsername?: string | null;
+  approvedAt?: string | null;
+  paidByUsername?: string | null;
+  paidAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type UpsertEmployeeMonthlyPayoutPayload = {
+  month: string;
+  employeeId: string;
+  payoutStatus?: EmployeeMonthlyPayoutStatus | null;
+  netPayableSalary?: number | null;
+  paidAmount?: number | null;
+  paymentMode?: PaymentMode | null;
+  paymentReferenceNo?: string | null;
+  notes?: string | null;
+};
+
+export type EmployeePayslipResponse = {
+  month: string;
+  dateFrom: string;
+  dateTo: string;
+  employeeId: string;
+  employeeName?: string | null;
+  employeeType: EmployeeType;
+  presentDays: number;
+  absentDays: number;
+  presentShifts: number;
+  totalHoursWorked: number;
+  suggestedSalary: number;
+  bonusAmount: number;
+  productionIncentiveAmount: number;
+  advanceAmount: number;
+  deductionAmount: number;
+  grossSalary: number;
+  netPayableSalary: number;
+  payoutStatus: EmployeeMonthlyPayoutStatus;
+  paidAmount: number;
+  pendingAmount: number;
+  paymentMode?: PaymentMode | null;
+  paymentReferenceNo?: string | null;
+  payoutNotes?: string | null;
+  approvedAt?: string | null;
+  paidAt?: string | null;
+  generatedAt: string;
 };
 
 export type EmployeeCompensationAdjustmentResponse = {
@@ -2389,6 +2457,103 @@ export const EmployeeApi = {
         Accept: "text/csv",
       },
     });
+  },
+
+  listMonthlyPayouts: (month: string) => {
+    const search = new URLSearchParams();
+    search.set("month", month);
+    return http<EmployeeMonthlyPayoutResponse[]>(
+      `${API_BASE_URL}/api/employees/attendance/monthly/payouts?${search.toString()}`
+    );
+  },
+
+  upsertMonthlyPayout: (payload: UpsertEmployeeMonthlyPayoutPayload) =>
+    http<EmployeeMonthlyPayoutResponse>(`${API_BASE_URL}/api/employees/attendance/monthly/payouts`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  payslip: (
+    employeeId: string,
+    params: EmployeeAttendanceMonthlyReportParams
+  ) => {
+    const search = new URLSearchParams();
+    search.set("month", params.month);
+    search.set("employeeId", employeeId);
+    if (params.includeAdjustments !== undefined) {
+      search.set("includeAdjustments", String(params.includeAdjustments));
+    }
+    if (params.salaryMode) {
+      search.set("salaryMode", params.salaryMode);
+    }
+    if (params.fullTimeDailyRate != null) {
+      search.set("fullTimeDailyRate", String(params.fullTimeDailyRate));
+    }
+    if (params.partTimeDailyRate != null) {
+      search.set("partTimeDailyRate", String(params.partTimeDailyRate));
+    }
+    if (params.fullTimeShiftRate != null) {
+      search.set("fullTimeShiftRate", String(params.fullTimeShiftRate));
+    }
+    if (params.partTimeShiftRate != null) {
+      search.set("partTimeShiftRate", String(params.partTimeShiftRate));
+    }
+    if (params.hourlyRate != null) {
+      search.set("hourlyRate", String(params.hourlyRate));
+    }
+    if (params.overtimeHourlyRate != null) {
+      search.set("overtimeHourlyRate", String(params.overtimeHourlyRate));
+    }
+    if (params.standardHoursPerDay != null) {
+      search.set("standardHoursPerDay", String(params.standardHoursPerDay));
+    }
+    return http<EmployeePayslipResponse>(
+      `${API_BASE_URL}/api/employees/attendance/monthly/payslip?${search.toString()}`
+    );
+  },
+
+  exportPayslipHtml: (
+    employeeId: string,
+    params: EmployeeAttendanceMonthlyReportParams
+  ) => {
+    const search = new URLSearchParams();
+    search.set("month", params.month);
+    search.set("employeeId", employeeId);
+    if (params.includeAdjustments !== undefined) {
+      search.set("includeAdjustments", String(params.includeAdjustments));
+    }
+    if (params.salaryMode) {
+      search.set("salaryMode", params.salaryMode);
+    }
+    if (params.fullTimeDailyRate != null) {
+      search.set("fullTimeDailyRate", String(params.fullTimeDailyRate));
+    }
+    if (params.partTimeDailyRate != null) {
+      search.set("partTimeDailyRate", String(params.partTimeDailyRate));
+    }
+    if (params.fullTimeShiftRate != null) {
+      search.set("fullTimeShiftRate", String(params.fullTimeShiftRate));
+    }
+    if (params.partTimeShiftRate != null) {
+      search.set("partTimeShiftRate", String(params.partTimeShiftRate));
+    }
+    if (params.hourlyRate != null) {
+      search.set("hourlyRate", String(params.hourlyRate));
+    }
+    if (params.overtimeHourlyRate != null) {
+      search.set("overtimeHourlyRate", String(params.overtimeHourlyRate));
+    }
+    if (params.standardHoursPerDay != null) {
+      search.set("standardHoursPerDay", String(params.standardHoursPerDay));
+    }
+    return httpText(
+      `${API_BASE_URL}/api/employees/attendance/monthly/payslip/export?${search.toString()}`,
+      {
+        headers: {
+          Accept: "text/html",
+        },
+      }
+    );
   },
 
   listCompAdjustments: (params: { month: string; employeeId?: string }) => {

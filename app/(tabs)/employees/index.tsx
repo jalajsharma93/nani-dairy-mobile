@@ -6,6 +6,7 @@ import {
   CompensationAdjustmentType,
   EmployeeApi,
   EmployeeAttendanceMonthlyReportResponse,
+  EmployeeMonthlyPayoutStatus,
   EmployeeCompensationAdjustmentResponse,
   EmployeeGovernmentIdType,
   EmployeeResponse,
@@ -59,6 +60,16 @@ function employeeTypeTone(type: EmployeeType) {
     return { text: DairyColors.success, background: DairyColors.successSoft };
   }
   return { text: DairyColors.info, background: DairyColors.infoSoft };
+}
+
+function payoutTone(status?: EmployeeMonthlyPayoutStatus | null) {
+  if (status === "PAID") {
+    return { text: DairyColors.success, background: DairyColors.successSoft };
+  }
+  if (status === "APPROVED") {
+    return { text: DairyColors.info, background: DairyColors.infoSoft };
+  }
+  return { text: DairyColors.warning, background: DairyColors.warningSoft };
 }
 
 function normalizeOptionalInput(value: string): string | null {
@@ -144,6 +155,8 @@ export default function EmployeesScreen() {
   const [monthlyReport, setMonthlyReport] = useState<EmployeeAttendanceMonthlyReportResponse | null>(null);
   const [monthlyReportLoading, setMonthlyReportLoading] = useState(false);
   const [monthlyReportExporting, setMonthlyReportExporting] = useState(false);
+  const [monthlyPayoutSavingEmployeeId, setMonthlyPayoutSavingEmployeeId] = useState<string | null>(null);
+  const [payslipExportingEmployeeId, setPayslipExportingEmployeeId] = useState<string | null>(null);
   const [compAdjustments, setCompAdjustments] = useState<EmployeeCompensationAdjustmentResponse[]>([]);
   const [compAdjustmentsLoading, setCompAdjustmentsLoading] = useState(false);
   const [compAdjustmentSaving, setCompAdjustmentSaving] = useState(false);
@@ -203,6 +216,11 @@ export default function EmployeesScreen() {
     if (mode === "SHIFT") return x("Shift", "शिफ्ट");
     if (mode === "HOURLY") return x("Hourly", "घंटे के हिसाब से");
     return x("Daily + OT", "दैनिक + ओटी");
+  };
+  const payoutStatusLabel = (status?: EmployeeMonthlyPayoutStatus | null) => {
+    if (status === "PAID") return x("Paid", "भुगतान पूरा");
+    if (status === "APPROVED") return x("Approved", "स्वीकृत");
+    return x("Pending", "लंबित");
   };
   const compAdjustmentTypeLabel = (type: CompensationAdjustmentType) => {
     if (type === "ADVANCE") return x("Advance", "अग्रिम");
@@ -931,6 +949,80 @@ export default function EmployeesScreen() {
     }
   };
 
+  const saveMonthlyPayoutStatus = async (
+    row: EmployeeAttendanceMonthlyReportResponse["rows"][number],
+    status: EmployeeMonthlyPayoutStatus
+  ) => {
+    if (!canManageEmployees) {
+      Alert.alert(
+        x("Admin only", "सिर्फ एडमिन"),
+        x("Only ADMIN users can finalize payout status.", "पेरोल भुगतान स्थिति सिर्फ ADMIN फाइनल कर सकता है।")
+      );
+      return;
+    }
+    try {
+      const params = buildMonthlyReportParams();
+      setMonthlyPayoutSavingEmployeeId(row.employeeId);
+      await EmployeeApi.upsertMonthlyPayout({
+        month: params.month,
+        employeeId: row.employeeId,
+        payoutStatus: status,
+        netPayableSalary: row.netPayableSalary,
+        paidAmount: status === "PAID" ? row.netPayableSalary : row.paidAmount ?? 0,
+        paymentMode: status === "PAID" ? "UPI" : row.payoutPaymentMode ?? null,
+        paymentReferenceNo: status === "PAID" ? `PAY-${params.month}-${row.employeeId}` : row.payoutReferenceNo ?? null,
+        notes:
+          status === "PAID"
+            ? `Auto-marked as paid from payroll screen for ${params.month}`
+            : `Marked as approved from payroll screen for ${params.month}`,
+      });
+      await loadMonthlyReport();
+      Alert.alert(
+        x("Saved", "सेव हुआ"),
+        status === "PAID"
+          ? x("Payout marked as PAID.", "भुगतान स्थिति PAID कर दी गई।")
+          : x("Payout marked as APPROVED.", "भुगतान स्थिति APPROVED कर दी गई।")
+      );
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Update failed", "अपडेट नहीं हुआ"),
+        e?.message ?? x("Could not update payout status.", "पेरोल स्थिति अपडेट नहीं हो पाई।")
+      );
+    } finally {
+      setMonthlyPayoutSavingEmployeeId(null);
+    }
+  };
+
+  const exportPayslipForEmployee = async (
+    row: EmployeeAttendanceMonthlyReportResponse["rows"][number]
+  ) => {
+    if (!canManageAttendance) {
+      return;
+    }
+    try {
+      const params = buildMonthlyReportParams();
+      setPayslipExportingEmployeeId(row.employeeId);
+      const html = await EmployeeApi.exportPayslipHtml(row.employeeId, params);
+      if (!html.trim()) {
+        Alert.alert(x("Empty export", "खाली एक्सपोर्ट"), x("Payslip content is empty.", "पेस्लिप कंटेंट खाली है।"));
+        return;
+      }
+      await Share.share({
+        message: html,
+        title: `payslip-${row.employeeId}-${params.month}.html`,
+      });
+    } catch (e: any) {
+      console.error(e);
+      Alert.alert(
+        x("Export failed", "एक्सपोर्ट नहीं हुआ"),
+        e?.message ?? x("Could not export payslip.", "पेस्लिप एक्सपोर्ट नहीं हो पाई।")
+      );
+    } finally {
+      setPayslipExportingEmployeeId(null);
+    }
+  };
+
   const applySuggestedSalaryFromReport = (
     row: EmployeeAttendanceMonthlyReportResponse["rows"][number]
   ) => {
@@ -1446,26 +1538,111 @@ export default function EmployeesScreen() {
                           <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "700" }}>
                             {`${x("Gross", "ग्रॉस")}: Rs ${row.grossSalary.toFixed(2)} | ${x("Net", "नेट")}: Rs ${row.netPayableSalary.toFixed(2)}`}
                           </Text>
-
-                          {canManageEmployees ? (
-                            <Pressable
-                              onPress={() => applySuggestedSalaryFromReport(row)}
+                          <View style={{ marginTop: 6, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <View
                               style={{
-                                marginTop: 8,
-                                borderWidth: 1,
-                                borderColor: DairyColors.primary,
-                                borderRadius: 8,
-                                alignSelf: "flex-start",
-                                paddingHorizontal: 10,
-                                paddingVertical: 7,
-                                backgroundColor: DairyColors.primarySoft,
+                                borderRadius: 999,
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                backgroundColor: payoutTone(row.payoutStatus).background,
                               }}
                             >
-                              <Text style={{ color: DairyColors.primary, fontWeight: "700" }}>
-                                {x("Use Net Payable", "नेट देय भरें")}
+                              <Text style={{ color: payoutTone(row.payoutStatus).text, fontWeight: "800" }}>
+                                {payoutStatusLabel(row.payoutStatus)}
                               </Text>
-                            </Pressable>
+                            </View>
+                            <Text style={{ color: DairyColors.textSecondary }}>
+                              {`${x("Paid", "भुगतान")}: Rs ${(row.paidAmount ?? 0).toFixed(2)} | ${x("Pending", "बाकी")}: Rs ${(row.pendingAmount ?? Math.max(0, row.netPayableSalary - (row.paidAmount ?? 0))).toFixed(2)}`}
+                            </Text>
+                          </View>
+                          {row.payoutPaymentMode || row.payoutReferenceNo ? (
+                            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                              {`${x("Mode", "मोड")}: ${row.payoutPaymentMode ?? "-"}${row.payoutReferenceNo ? ` | ${x("Ref", "रेफ")}: ${row.payoutReferenceNo}` : ""}`}
+                            </Text>
                           ) : null}
+
+                          <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                            {canManageAttendance ? (
+                              <Pressable
+                                onPress={() => void exportPayslipForEmployee(row)}
+                                disabled={payslipExportingEmployeeId === row.employeeId}
+                                style={{
+                                  borderWidth: 1,
+                                  borderColor: DairyColors.info,
+                                  borderRadius: 8,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  backgroundColor: DairyColors.infoSoft,
+                                }}
+                              >
+                                <Text style={{ color: DairyColors.info, fontWeight: "700" }}>
+                                  {payslipExportingEmployeeId === row.employeeId
+                                    ? x("Exporting...", "एक्सपोर्ट...")
+                                    : x("Payslip (PDF-ready)", "पेस्लिप (PDF-ready)")}
+                                </Text>
+                              </Pressable>
+                            ) : null}
+
+                            {canManageEmployees && row.payoutStatus !== "APPROVED" && row.payoutStatus !== "PAID" ? (
+                              <Pressable
+                                onPress={() => void saveMonthlyPayoutStatus(row, "APPROVED")}
+                                disabled={monthlyPayoutSavingEmployeeId === row.employeeId}
+                                style={{
+                                  borderWidth: 1,
+                                  borderColor: DairyColors.info,
+                                  borderRadius: 8,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  backgroundColor: DairyColors.infoSoft,
+                                }}
+                              >
+                                <Text style={{ color: DairyColors.info, fontWeight: "700" }}>
+                                  {monthlyPayoutSavingEmployeeId === row.employeeId
+                                    ? x("Saving...", "सेव...")
+                                    : x("Approve", "स्वीकृत करें")}
+                                </Text>
+                              </Pressable>
+                            ) : null}
+
+                            {canManageEmployees && row.payoutStatus !== "PAID" ? (
+                              <Pressable
+                                onPress={() => void saveMonthlyPayoutStatus(row, "PAID")}
+                                disabled={monthlyPayoutSavingEmployeeId === row.employeeId}
+                                style={{
+                                  borderWidth: 1,
+                                  borderColor: DairyColors.success,
+                                  borderRadius: 8,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  backgroundColor: DairyColors.successSoft,
+                                }}
+                              >
+                                <Text style={{ color: DairyColors.success, fontWeight: "700" }}>
+                                  {monthlyPayoutSavingEmployeeId === row.employeeId
+                                    ? x("Saving...", "सेव...")
+                                    : x("Mark Paid", "भुगतान पूरा")}
+                                </Text>
+                              </Pressable>
+                            ) : null}
+
+                            {canManageEmployees ? (
+                              <Pressable
+                                onPress={() => applySuggestedSalaryFromReport(row)}
+                                style={{
+                                  borderWidth: 1,
+                                  borderColor: DairyColors.primary,
+                                  borderRadius: 8,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 7,
+                                  backgroundColor: DairyColors.primarySoft,
+                                }}
+                              >
+                                <Text style={{ color: DairyColors.primary, fontWeight: "700" }}>
+                                  {x("Use Net Payable", "नेट देय भरें")}
+                                </Text>
+                              </Pressable>
+                            ) : null}
+                          </View>
                         </View>
                       ))
                     )}
