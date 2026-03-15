@@ -863,7 +863,7 @@ export default function AnimalsScreen() {
                   {x("Date of Birth (YYYY-MM-DD)", "जन्मतिथि (YYYY-MM-DD)")}
                 </Text>
                 <DateInput
-                  placeholder="YYYY-MM-DD"
+                  placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
                   value={dateOfBirth}
                   onChangeText={setDateOfBirth}
                 />
@@ -927,7 +927,7 @@ export default function AnimalsScreen() {
                         color: DairyColors.textPrimary,
                         backgroundColor: DairyColors.surfaceMuted,
                       }}
-                      placeholder="0.0"
+                      placeholder={x("e.g. 0.0", "जैसे 0.0")}
                       placeholderTextColor="#99A99A"
                       keyboardType="decimal-pad"
                       value={birthWeightKg}
@@ -948,7 +948,7 @@ export default function AnimalsScreen() {
                         color: DairyColors.textPrimary,
                         backgroundColor: DairyColors.surfaceMuted,
                       }}
-                      placeholder="0.0"
+                      placeholder={x("e.g. 0.0", "जैसे 0.0")}
                       placeholderTextColor="#99A99A"
                       keyboardType="decimal-pad"
                       value={currentWeightKg}
@@ -963,7 +963,7 @@ export default function AnimalsScreen() {
                       {x("Last Weight Date", "आखिरी वजन तारीख")}
                     </Text>
                     <DateInput
-                      placeholder="YYYY-MM-DD"
+                      placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
                       value={lastWeightDate}
                       onChangeText={setLastWeightDate}
                     />
@@ -973,7 +973,7 @@ export default function AnimalsScreen() {
                       {x("Weaning Date", "दूध छुड़ाने की तारीख")}
                     </Text>
                     <DateInput
-                      placeholder="YYYY-MM-DD"
+                      placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
                       value={weaningDate}
                       onChangeText={setWeaningDate}
                     />
@@ -993,7 +993,7 @@ export default function AnimalsScreen() {
                     color: DairyColors.textPrimary,
                     backgroundColor: DairyColors.surfaceMuted,
                   }}
-                  placeholder="0.0"
+                  placeholder={x("e.g. 0.0", "जैसे 0.0")}
                   placeholderTextColor="#99A99A"
                   keyboardType="decimal-pad"
                   value={weaningWeightKg}

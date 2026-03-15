@@ -1125,7 +1125,7 @@ export default function BreedingScreen() {
         <DateInput
           value={heatDate}
           onChangeText={setHeatDate}
-          placeholder="YYYY-MM-DD"
+          placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
         />
 
         <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
@@ -1136,7 +1136,7 @@ export default function BreedingScreen() {
             <DateInput
               value={inseminationDate}
               onChangeText={setInseminationDate}
-              placeholder="YYYY-MM-DD"
+              placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
             />
           </View>
           <View style={{ flex: 1 }}>
@@ -1146,7 +1146,7 @@ export default function BreedingScreen() {
             <DateInput
               value={pregnancyCheckDate}
               onChangeText={setPregnancyCheckDate}
-              placeholder="YYYY-MM-DD"
+              placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
             />
           </View>
         </View>
@@ -1203,7 +1203,7 @@ export default function BreedingScreen() {
             <DateInput
               value={expectedCalvingDate}
               onChangeText={setExpectedCalvingDate}
-              placeholder="YYYY-MM-DD"
+              placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
             />
           </View>
           <View style={{ flex: 1 }}>
@@ -1213,7 +1213,7 @@ export default function BreedingScreen() {
             <DateInput
               value={actualCalvingDate}
               onChangeText={setActualCalvingDate}
-              placeholder="YYYY-MM-DD"
+              placeholder={x("YYYY-MM-DD", "YYYY-MM-DD")}
             />
           </View>
         </View>

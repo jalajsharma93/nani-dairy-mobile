@@ -80,7 +80,7 @@ function statusOptions(task: GenericTaskResponse): GenericTaskStatus[] {
 }
 
 export default function TodayTasksScreen() {
-  const { x } = useI18n();
+  const { x, label } = useI18n();
   const { user } = useAuth();
   const permissions = resolveRolePermissions(user?.role);
   const canManageTasks = permissions.canManageTasks;
@@ -177,6 +177,20 @@ export default function TodayTasksScreen() {
     if (taskType === "FEED") return x("Feed", "फीड");
     if (taskType === "FARM") return x("Farm", "फार्म");
     return x("Other", "अन्य");
+  };
+
+  const templateFrequencyLabel = (frequency: GenericTaskTemplateFrequency) => {
+    return frequency === "WEEKLY" ? x("Weekly", "साप्ताहिक") : x("Daily", "दैनिक");
+  };
+
+  const weekdayShortLabel = (day: (typeof TEMPLATE_WEEK_DAYS)[number]) => {
+    if (day === "MONDAY") return x("Mon", "सोम");
+    if (day === "TUESDAY") return x("Tue", "मंगल");
+    if (day === "WEDNESDAY") return x("Wed", "बुध");
+    if (day === "THURSDAY") return x("Thu", "गुरु");
+    if (day === "FRIDAY") return x("Fri", "शुक्र");
+    if (day === "SATURDAY") return x("Sat", "शनि");
+    return x("Sun", "रवि");
   };
 
   const load = useCallback(async () => {
@@ -969,7 +983,9 @@ export default function TodayTasksScreen() {
                     paddingVertical: 7,
                   }}
                 >
-                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{freq}</Text>
+                  <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                    {templateFrequencyLabel(freq)}
+                  </Text>
                 </Pressable>
               ))}
             </View>
@@ -991,7 +1007,9 @@ export default function TodayTasksScreen() {
                       paddingVertical: 7,
                     }}
                   >
-                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{day.slice(0, 3)}</Text>
+                    <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                      {weekdayShortLabel(day)}
+                    </Text>
                   </Pressable>
                 ))}
               </View>
@@ -1006,7 +1024,7 @@ export default function TodayTasksScreen() {
                   value={templateReminderLeadMinutes}
                   onChangeText={setTemplateReminderLeadMinutes}
                   keyboardType="numeric"
-                  placeholder="60"
+                  placeholder={x("e.g. 60", "जैसे 60")}
                   placeholderTextColor={DairyColors.textSecondary}
                   style={{
                     marginTop: 6,
@@ -1028,7 +1046,7 @@ export default function TodayTasksScreen() {
                   value={templateReminderRepeatMinutes}
                   onChangeText={setTemplateReminderRepeatMinutes}
                   keyboardType="numeric"
-                  placeholder="180"
+                  placeholder={x("e.g. 180", "जैसे 180")}
                   placeholderTextColor={DairyColors.textSecondary}
                   style={{
                     marginTop: 6,
@@ -1053,7 +1071,7 @@ export default function TodayTasksScreen() {
                   value={templateEscalationDelayMinutes}
                   onChangeText={setTemplateEscalationDelayMinutes}
                   keyboardType="numeric"
-                  placeholder="240"
+                  placeholder={x("e.g. 240", "जैसे 240")}
                   placeholderTextColor={DairyColors.textSecondary}
                   style={{
                     marginTop: 6,
@@ -1086,7 +1104,9 @@ export default function TodayTasksScreen() {
                         paddingVertical: 7,
                       }}
                     >
-                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>{role}</Text>
+                      <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                        {label("role", role)}
+                      </Text>
                     </Pressable>
                   ))}
                 </View>
@@ -1146,21 +1166,27 @@ export default function TodayTasksScreen() {
                     </View>
                   </View>
                   <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                    {x(
-                      `${template.taskType} | ${template.frequency} | Due ${template.dueTime ?? "Anytime"}`,
-                      `${template.taskType} | ${template.frequency} | समय ${template.dueTime ?? "कभी भी"}`
-                    )}
+                    {`${taskTypeLabel(template.taskType)} | ${templateFrequencyLabel(
+                      template.frequency
+                    )} | ${x("Due", "समय")} ${template.dueTime ?? x("Anytime", "कभी भी")}`}
+                  </Text>
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+                    {`${x("Assigned", "असाइन")} ${label("role", template.assignedRole)}${
+                      template.assignedToUsername ? ` (${template.assignedToUsername})` : ""
+                    }`}
                   </Text>
                   <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
                     {x(
-                      `Assigned ${template.assignedRole}${template.assignedToUsername ? ` (${template.assignedToUsername})` : ""}`,
-                      `असाइन ${template.assignedRole}${template.assignedToUsername ? ` (${template.assignedToUsername})` : ""}`
-                    )}
-                  </Text>
-                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-                    {x(
-                      `Reminder lead ${template.reminderLeadMinutes ?? "-"} | Repeat ${template.reminderRepeatMinutes ?? "-"} | Escalate ${template.escalationDelayMinutes ?? "-"} to ${template.escalateToRole ?? "-"}`,
-                      `रिमाइंडर लीड ${template.reminderLeadMinutes ?? "-"} | रिपीट ${template.reminderRepeatMinutes ?? "-"} | एस्केलेट ${template.escalationDelayMinutes ?? "-"} मिनट में ${template.escalateToRole ?? "-"}`
+                      `Reminder lead ${template.reminderLeadMinutes ?? "-"} | Repeat ${
+                        template.reminderRepeatMinutes ?? "-"
+                      } | Escalate ${template.escalationDelayMinutes ?? "-"} to ${
+                        template.escalateToRole ? label("role", template.escalateToRole) : "-"
+                      }`,
+                      `रिमाइंडर लीड ${template.reminderLeadMinutes ?? "-"} | रिपीट ${
+                        template.reminderRepeatMinutes ?? "-"
+                      } | एस्केलेट ${template.escalationDelayMinutes ?? "-"} मिनट में ${
+                        template.escalateToRole ? label("role", template.escalateToRole) : "-"
+                      }`
                     )}
                   </Text>
                   {template.details ? (
