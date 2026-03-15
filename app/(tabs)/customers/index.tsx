@@ -70,6 +70,18 @@ function normalizeSkipDatesCsv(input: string | null | undefined) {
   return values.sort((a, b) => a.localeCompare(b));
 }
 
+function parsePositiveNumber(raw: string): number | null {
+  const normalized = raw.trim().replace(",", ".");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
 export default function CustomersScreen() {
   const { user } = useAuth();
   const { x, label } = useI18n();
@@ -389,7 +401,7 @@ export default function CustomersScreen() {
     setPhone(row.phone ?? "");
     setRouteName(row.routeName ?? "");
     setCollectionPoint(row.collectionPoint ?? "");
-    setSubscriptionActive(Boolean(row.subscriptionActive));
+    setSubscriptionActive(Boolean(row.subscriptionActive || (row.dailySubscriptionQty ?? 0) > 0));
     setDailySubscriptionQty(row.dailySubscriptionQty == null ? "" : String(row.dailySubscriptionQty));
     setSubscriptionFrequency((row.subscriptionFrequency as SubscriptionFrequency | null) ?? "DAILY");
     setDefaultMilkUnitPrice(row.defaultMilkUnitPrice == null ? "" : String(row.defaultMilkUnitPrice));
@@ -410,26 +422,28 @@ export default function CustomersScreen() {
       return;
     }
 
-    const qty = dailySubscriptionQty.trim() ? Number(dailySubscriptionQty) : null;
-    if (qty != null && (!Number.isFinite(qty) || qty <= 0)) {
+    const rawQty = dailySubscriptionQty.trim();
+    const qty = parsePositiveNumber(rawQty);
+    if (rawQty && qty == null) {
       Alert.alert(x("Invalid value", "गलत मान"), x("Daily quantity must be positive.", "दैनिक मात्रा पॉजिटिव रखें।"));
       return;
     }
-    if (subscriptionActive && qty == null) {
+    const effectiveSubscriptionActive = subscriptionActive || qty != null;
+    if (effectiveSubscriptionActive && qty == null) {
       Alert.alert(
         x("Missing details", "जानकारी अधूरी"),
         x("Daily quantity is required for subscription customer.", "सब्सक्रिप्शन ग्राहक के लिए दैनिक मात्रा जरूरी है।")
       );
       return;
     }
-    if (subscriptionActive && !subscriptionFrequency) {
+    if (effectiveSubscriptionActive && !subscriptionFrequency) {
       Alert.alert(
         x("Missing details", "जानकारी अधूरी"),
         x("Select subscription frequency.", "सब्सक्रिप्शन फ्रीक्वेंसी चुनें।")
       );
       return;
     }
-    if (subscriptionPausedUntil.trim() && !ISO_DATE_REGEX.test(subscriptionPausedUntil.trim())) {
+    if (effectiveSubscriptionActive && subscriptionPausedUntil.trim() && !ISO_DATE_REGEX.test(subscriptionPausedUntil.trim())) {
       Alert.alert(
         x("Invalid value", "गलत मान"),
         x("Pause until date must be YYYY-MM-DD.", "पॉज़-अनटिल तारीख YYYY-MM-DD फॉर्मेट में हो।")
@@ -437,7 +451,7 @@ export default function CustomersScreen() {
       return;
     }
     const normalizedSkipDates = normalizeSkipDatesCsv(subscriptionSkipDatesCsv);
-    if (subscriptionSkipDatesCsv.trim() && normalizedSkipDates.length === 0) {
+    if (effectiveSubscriptionActive && subscriptionSkipDatesCsv.trim() && normalizedSkipDates.length === 0) {
       Alert.alert(
         x("Invalid value", "गलत मान"),
         x("Skip dates must be comma-separated YYYY-MM-DD values.", "स्किप तारीखें YYYY-MM-DD (comma-separated) में डालें।")
@@ -445,7 +459,7 @@ export default function CustomersScreen() {
       return;
     }
     const normalizedHolidayWeekdays = normalizeDaysCsv(subscriptionHolidayWeekdaysCsv);
-    if (subscriptionHolidayWeekdaysCsv.trim() && normalizedHolidayWeekdays.length === 0) {
+    if (effectiveSubscriptionActive && subscriptionHolidayWeekdaysCsv.trim() && normalizedHolidayWeekdays.length === 0) {
       Alert.alert(
         x("Invalid value", "गलत मान"),
         x("Holiday weekdays must be comma-separated days like SUN,MON.", "हॉलिडे दिन SUN,MON जैसे comma-separated दें।")
@@ -469,12 +483,12 @@ export default function CustomersScreen() {
         phone: phone.trim() || null,
         routeName: routeName.trim() || null,
         collectionPoint: collectionPoint.trim() || null,
-        subscriptionActive,
-        dailySubscriptionQty: subscriptionActive ? qty : null,
-        subscriptionFrequency: subscriptionActive ? subscriptionFrequency : null,
-        subscriptionPausedUntil: subscriptionActive ? subscriptionPausedUntil.trim() || null : null,
-        subscriptionSkipDatesCsv: subscriptionActive ? normalizedSkipDates.join(",") || null : null,
-        subscriptionHolidayWeekdaysCsv: subscriptionActive
+        subscriptionActive: effectiveSubscriptionActive,
+        dailySubscriptionQty: effectiveSubscriptionActive ? qty : null,
+        subscriptionFrequency: effectiveSubscriptionActive ? subscriptionFrequency || "DAILY" : null,
+        subscriptionPausedUntil: effectiveSubscriptionActive ? subscriptionPausedUntil.trim() || null : null,
+        subscriptionSkipDatesCsv: effectiveSubscriptionActive ? normalizedSkipDates.join(",") || null : null,
+        subscriptionHolidayWeekdaysCsv: effectiveSubscriptionActive
           ? normalizedHolidayWeekdays.join(",") || null
           : null,
         defaultMilkUnitPrice: price,
