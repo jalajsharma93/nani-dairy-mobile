@@ -76,6 +76,19 @@ function slaTone(task: DeliveryTaskResponse) {
   return { bg: DairyColors.infoSoft, text: DairyColors.info };
 }
 
+function stockTransferTone(state?: string | null) {
+  if (state === "AUTO_TRANSFERRED") {
+    return { bg: DairyColors.successSoft, text: DairyColors.success };
+  }
+  if (state === "READY_FOR_AUTO_TRANSFER") {
+    return { bg: DairyColors.warningSoft, text: DairyColors.warning };
+  }
+  if (state === "NO_PENDING_TRANSFER") {
+    return { bg: DairyColors.infoSoft, text: DairyColors.info };
+  }
+  return { bg: DairyColors.surfaceMuted, text: DairyColors.textSecondary };
+}
+
 function taskProductType(task: DeliveryTaskResponse): ProductType {
   return task.productType ?? "MILK";
 }
@@ -729,6 +742,53 @@ export default function DeliveryOpsScreen() {
     return { totalRuns, totalStops, totalDelivered, totalExpected, totalActual, totalVariance };
   }, [runClosures]);
 
+  const stockTransferState = useMemo(() => {
+    if (latestClosure?.stockTransferState) {
+      return latestClosure.stockTransferState;
+    }
+    if (!shiftCloseSummary.bothClosed) {
+      return "WAITING_SHIFT_CLOSE";
+    }
+    return pendingMilkToCurd > 0 ? "READY_FOR_AUTO_TRANSFER" : "NO_PENDING_TRANSFER";
+  }, [latestClosure?.stockTransferState, pendingMilkToCurd, shiftCloseSummary.bothClosed]);
+
+  const stockTransferPendingLiters = useMemo(
+    () => latestClosure?.pendingMilkToCurdLiters ?? pendingMilkToCurd,
+    [latestClosure?.pendingMilkToCurdLiters, pendingMilkToCurd]
+  );
+
+  const stockTransferAlertMessage = useMemo(() => {
+    if (latestClosure?.stockAlertMessage?.trim()) {
+      return latestClosure.stockAlertMessage;
+    }
+    if (stockTransferState === "READY_FOR_AUTO_TRANSFER") {
+      return x(
+        `Both shifts closed. Pending milk ${stockTransferPendingLiters.toFixed(2)} L should move to curd.`,
+        `दोनों शिफ्ट बंद हैं। बाकी दूध ${stockTransferPendingLiters.toFixed(2)} L को दही में डालें।`
+      );
+    }
+    if (stockTransferState === "AUTO_TRANSFERRED") {
+      return x("Milk-to-curd transfer was auto-completed.", "दूध से दही ट्रांसफर अपने आप पूरा हो गया।");
+    }
+    if (stockTransferState === "NO_PENDING_TRANSFER") {
+      return x("Both shifts closed and no pending milk transfer remains.", "दोनों शिफ्ट बंद हैं और दूध ट्रांसफर लंबित नहीं है।");
+    }
+    return x(
+      "AM and PM shift closure is still in progress. Alerts stay active.",
+      "AM और PM शिफ्ट क्लोजर अभी प्रगति में है। अलर्ट सक्रिय रहेंगे।"
+    );
+  }, [latestClosure?.stockAlertMessage, stockTransferPendingLiters, stockTransferState, x]);
+
+  const stockTransferVisual = useMemo(() => stockTransferTone(stockTransferState), [stockTransferState]);
+  const amShiftClosed = useMemo(
+    () => latestClosure?.amShiftClosed ?? shiftCloseSummary.stats.find((row) => row.shift === "AM")?.closed ?? false,
+    [latestClosure?.amShiftClosed, shiftCloseSummary.stats]
+  );
+  const pmShiftClosed = useMemo(
+    () => latestClosure?.pmShiftClosed ?? shiftCloseSummary.stats.find((row) => row.shift === "PM")?.closed ?? false,
+    [latestClosure?.pmShiftClosed, shiftCloseSummary.stats]
+  );
+
   const previewSkippedItems = useMemo(
     () => subscriptionPreview?.items.filter((item) => !item.eligible) ?? [],
     [subscriptionPreview]
@@ -1351,16 +1411,24 @@ export default function DeliveryOpsScreen() {
       setClosureUpi("");
       setClosureOther("");
       setClosureNotes("");
+      await load();
+
+      const stockStateLine = saved.stockTransferState
+        ? ` | Stock ${saved.stockTransferState}`
+        : "";
+      const stockMessageLine = saved.stockAlertMessage
+        ? `\n${saved.stockAlertMessage}${saved.stockAlertChannel ? ` | Channel ${saved.stockAlertChannel}` : ""}`
+        : "";
 
       Alert.alert(
         x("Run closed", "रन बंद"),
         x(
           `Delivered ${saved.deliveredStops}/${saved.totalStops} | Pending ${saved.pendingStops} | Expected Rs ${saved.expectedCollection.toFixed(
             2
-          )} | Actual Rs ${saved.actualCollection.toFixed(2)} | Variance Rs ${saved.variance.toFixed(2)}`,
+          )} | Actual Rs ${saved.actualCollection.toFixed(2)} | Variance Rs ${saved.variance.toFixed(2)}${stockStateLine}${stockMessageLine}`,
           `डिलीवर ${saved.deliveredStops}/${saved.totalStops} | बाकी ${saved.pendingStops} | अपेक्षित रु ${saved.expectedCollection.toFixed(
             2
-          )} | वास्तविक रु ${saved.actualCollection.toFixed(2)} | अंतर रु ${saved.variance.toFixed(2)}`
+          )} | वास्तविक रु ${saved.actualCollection.toFixed(2)} | अंतर रु ${saved.variance.toFixed(2)}${stockStateLine}${stockMessageLine}`
         )
       );
     } catch (e: any) {
@@ -1375,7 +1443,7 @@ export default function DeliveryOpsScreen() {
   };
 
   const movePendingMilkToCurd = async () => {
-    if (!isPrivileged || pendingMilkToCurd <= 0) {
+    if (!isPrivileged || stockTransferPendingLiters <= 0) {
       return;
     }
     try {
@@ -1791,38 +1859,70 @@ export default function DeliveryOpsScreen() {
         </View>
       ) : null}
 
-      {pendingMilkToCurd > 0 ? (
-        <View
-          style={{
-            marginTop: 10,
-            borderWidth: 1,
-            borderColor: DairyColors.warning,
-            borderRadius: 12,
-            backgroundColor: DairyColors.warningSoft,
-            padding: 10,
-          }}
-        >
-          <Text style={{ color: DairyColors.warning, fontWeight: "800" }}>
+      <View
+        style={{
+          marginTop: 10,
+          borderWidth: 1,
+          borderColor: stockTransferVisual.text,
+          borderRadius: 12,
+          backgroundColor: stockTransferVisual.bg,
+          padding: 10,
+        }}
+      >
+        <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+          {x("Stock Transfer Status", "स्टॉक ट्रांसफर स्थिति")}
+        </Text>
+        <Text style={{ marginTop: 4, color: stockTransferVisual.text, fontWeight: "700" }}>
+          {stockTransferAlertMessage}
+        </Text>
+        <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+          {x(
+            `State ${stockTransferState} | Pending ${stockTransferPendingLiters.toFixed(2)} L`,
+            `स्थिति ${stockTransferState} | लंबित ${stockTransferPendingLiters.toFixed(2)} L`
+          )}
+        </Text>
+        {latestClosure?.stockAlertChannel ? (
+          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
             {x(
-              `Both shifts closed. Pending milk ${pendingMilkToCurd.toFixed(2)} L should move to curd.`,
-              `दोनों शिफ्ट बंद हैं। बाकी दूध ${pendingMilkToCurd.toFixed(2)} L को दही में डालें।`
+              `Alert channel: ${latestClosure.stockAlertChannel}`,
+              `अलर्ट चैनल: ${latestClosure.stockAlertChannel}`
             )}
           </Text>
-          {isPrivileged ? (
+        ) : null}
+        {latestClosure?.stockAutoTransferTriggered ? (
+          <Text style={{ marginTop: 2, color: DairyColors.success, fontWeight: "700" }}>
+            {x("Auto-transfer was triggered on last closure.", "आखिरी क्लोजर में ऑटो-ट्रांसफर चालू हुआ था।")}
+          </Text>
+        ) : null}
+        {stockTransferState === "WAITING_SHIFT_CLOSE" ? (
+          <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+            {x(
+              `AM closed: ${amShiftClosed ? "Yes" : "No"} | PM closed: ${pmShiftClosed ? "Yes" : "No"}`,
+              `AM बंद: ${amShiftClosed ? "हाँ" : "नहीं"} | PM बंद: ${pmShiftClosed ? "हाँ" : "नहीं"}`
+            )}
+          </Text>
+        ) : null}
+        {stockTransferPendingLiters > 0 ? (
+          isPrivileged ? (
             <Pressable
               onPress={() => void movePendingMilkToCurd()}
-              disabled={syncingToCurd}
+              disabled={syncingToCurd || stockTransferState === "AUTO_TRANSFERRED"}
               style={{
                 marginTop: 8,
                 alignSelf: "flex-start",
                 borderRadius: 10,
-                backgroundColor: syncingToCurd ? DairyColors.textSecondary : DairyColors.warning,
+                backgroundColor:
+                  syncingToCurd || stockTransferState === "AUTO_TRANSFERRED"
+                    ? DairyColors.textSecondary
+                    : DairyColors.warning,
                 paddingHorizontal: 12,
                 paddingVertical: 8,
               }}
             >
               <Text style={{ color: "white", fontWeight: "800" }}>
-                {syncingToCurd ? x("Moving...", "ट्रांसफर हो रहा...") : x("Move Milk to Curd", "दूध दही में डालें")}
+                {syncingToCurd
+                  ? x("Moving...", "ट्रांसफर हो रहा...")
+                  : x("Move Milk to Curd", "दूध दही में डालें")}
               </Text>
             </Pressable>
           ) : (
@@ -1832,9 +1932,9 @@ export default function DeliveryOpsScreen() {
                 "दही ट्रांसफर के लिए ADMIN/MANAGER से कहें।"
               )}
             </Text>
-          )}
-        </View>
-      ) : null}
+          )
+        ) : null}
+      </View>
 
       <View
         style={{
@@ -2397,6 +2497,17 @@ export default function DeliveryOpsScreen() {
               `अपेक्षित रु ${latestClosure.expectedCollection.toFixed(2)} | वास्तविक रु ${latestClosure.actualCollection.toFixed(2)} | अंतर रु ${latestClosure.variance.toFixed(2)}`
             )}
           </Text>
+          {latestClosure.stockTransferState ? (
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
+              {x(
+                `Stock ${latestClosure.stockTransferState} | Pending ${(latestClosure.pendingMilkToCurdLiters ?? 0).toFixed(2)} L`,
+                `स्टॉक ${latestClosure.stockTransferState} | लंबित ${(latestClosure.pendingMilkToCurdLiters ?? 0).toFixed(2)} L`
+              )}
+            </Text>
+          ) : null}
+          {latestClosure.stockAlertMessage ? (
+            <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>{latestClosure.stockAlertMessage}</Text>
+          ) : null}
           {latestClosure.notes ? (
             <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
               {x("Notes", "नोट्स")}: {latestClosure.notes}

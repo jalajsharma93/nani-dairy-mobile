@@ -749,6 +749,14 @@ export type DeliveryRunClosureResponse = {
   notes?: string | null;
   closedBy: string;
   closedAt: string;
+  amShiftClosed?: boolean | null;
+  pmShiftClosed?: boolean | null;
+  bothShiftsClosed?: boolean | null;
+  pendingMilkToCurdLiters?: number | null;
+  stockAutoTransferTriggered?: boolean | null;
+  stockTransferState?: string | null;
+  stockAlertChannel?: string | null;
+  stockAlertMessage?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
