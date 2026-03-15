@@ -402,6 +402,11 @@ export default function FeedScreen() {
       return;
     }
 
+    const editingLog =
+      editingFeedLogId != null
+        ? logs.find((row) => row.feedLogId === editingFeedLogId) ?? null
+        : null;
+
     try {
       setSaving(true);
       if (editingFeedLogId) {
@@ -416,6 +421,7 @@ export default function FeedScreen() {
           rationPhase,
           quantityKg: quantity,
           notes: notes.trim() || null,
+          expectedUpdatedAt: editingLog?.updatedAt ?? undefined,
         };
         await FeedApi.update(editingFeedLogId, payload);
       } else {
@@ -473,6 +479,7 @@ export default function FeedScreen() {
               rationPhase,
               quantityKg: quantity,
               notes: notes.trim() || null,
+              expectedUpdatedAt: editingLog?.updatedAt ?? undefined,
             };
             await queueFeedLogUpdate(editingFeedLogId, payload, String(e?.message ?? ""));
             queued = true;

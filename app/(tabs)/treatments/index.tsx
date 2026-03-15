@@ -624,11 +624,19 @@ export default function TreatmentsScreen() {
       followUpDate: followUpDate.trim() || null,
       notes: notes.trim() || null,
     };
+    const editingTreatment =
+      editingTreatmentId != null
+        ? treatments.find((row) => row.treatmentId === editingTreatmentId) ?? null
+        : null;
+    const updatePayload = {
+      ...payload,
+      expectedUpdatedAt: editingTreatment?.updatedAt ?? undefined,
+    };
 
     try {
       setSaving(true);
       if (editingTreatmentId) {
-        await TreatmentApi.update(selectedAnimalId, editingTreatmentId, payload);
+        await TreatmentApi.update(selectedAnimalId, editingTreatmentId, updatePayload);
       } else {
         await TreatmentApi.create(selectedAnimalId, payload);
       }
@@ -696,7 +704,7 @@ export default function TreatmentsScreen() {
           {
             animalId: selectedAnimalId,
             treatmentId: editingTreatmentId,
-            payload,
+            payload: editingTreatmentId ? updatePayload : payload,
           },
           message
         );

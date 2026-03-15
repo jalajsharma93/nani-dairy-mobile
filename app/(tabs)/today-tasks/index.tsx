@@ -348,12 +348,22 @@ export default function TodayTasksScreen() {
     }
     try {
       setSavingTaskId(taskId);
-      await TaskApi.updateStatus(taskId, { status });
+      await TaskApi.updateStatus(taskId, {
+        status,
+        expectedUpdatedAt: current?.updatedAt ?? undefined,
+      });
       await load();
     } catch (e: any) {
       console.error(e);
       if (shouldQueueForOffline(e)) {
-        await queueGenericTaskStatus(taskId, { status }, String(e?.message ?? ""));
+        await queueGenericTaskStatus(
+          taskId,
+          {
+            status,
+            expectedUpdatedAt: current?.updatedAt ?? undefined,
+          },
+          String(e?.message ?? "")
+        );
         await refreshPendingSync();
         Alert.alert(
           x("Saved Offline", "ऑफलाइन सेव"),
@@ -436,6 +446,7 @@ export default function TodayTasksScreen() {
           status === "DELIVERED"
             ? task.deliveredQtyLiters ?? task.plannedQtyLiters
             : task.deliveredQtyLiters ?? null,
+        expectedUpdatedAt: task.updatedAt ?? undefined,
       });
       await load();
     } catch (e: any) {

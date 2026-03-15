@@ -1220,7 +1220,7 @@ export default function SalesScreen() {
     setNotes(sale.notes ?? "");
   };
 
-  const updateReconciliation = async (saleId: string, reconciled: boolean) => {
+  const updateReconciliation = async (sale: SaleResponse, reconciled: boolean) => {
     if (!canManageSales) {
       Alert.alert(
         x("Role restricted", "रोल अनुमति नहीं"),
@@ -1228,14 +1228,19 @@ export default function SalesScreen() {
       );
       return;
     }
+    const saleId = sale.saleId;
+    const payload = {
+      reconciled,
+      expectedUpdatedAt: sale.updatedAt ?? undefined,
+    };
     try {
       setReconcilingSaleId(saleId);
-      await SalesApi.reconcile(saleId, { reconciled });
+      await SalesApi.reconcile(saleId, payload);
       await Promise.all([loadSales(), loadMonthStatement()]);
     } catch (e: any) {
       console.error(e);
       if (shouldQueueForOffline(e)) {
-        await queueSaleReconcileUpdate(saleId, { reconciled }, String(e?.message ?? ""));
+        await queueSaleReconcileUpdate(saleId, payload, String(e?.message ?? ""));
         await refreshPendingSync();
         Alert.alert(
           x("Saved Offline", "ऑफलाइन सेव"),
@@ -3593,7 +3598,7 @@ export default function SalesScreen() {
                     {canManageSales ? (
                       <Pressable
                         disabled={reconcilingSaleId === item.saleId}
-                        onPress={() => updateReconciliation(item.saleId, !isReconciled)}
+                        onPress={() => updateReconciliation(item, !isReconciled)}
                         style={{
                           marginTop: 8,
                           borderWidth: 1,

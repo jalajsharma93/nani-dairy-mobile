@@ -7,6 +7,7 @@ import {
   clearAllPendingSyncOperations,
   clearConflictSyncOperations,
   clearDeadLetterSyncOperations,
+  forceLocalPendingSyncOperation,
   flushPendingSyncOperations,
   getPendingSyncOperations,
   getPendingSyncSummary,
@@ -15,6 +16,7 @@ import {
   removePendingSyncOperation,
   requeueConflictSyncOperations,
   requeueDeadLetterSyncOperations,
+  retryPendingSyncOperation,
 } from "@/src/utils/offline-sync";
 
 function stateTone(state: "PENDING" | "DEAD_LETTER" | "CONFLICT") {
@@ -122,6 +124,18 @@ export default function SyncCenterScreen() {
   const dismissOne = async (localId: string) => {
     await removePendingSyncOperation(localId);
     await load();
+  };
+
+  const retryOne = async (localId: string) => {
+    await retryPendingSyncOperation(localId);
+    await load();
+    await syncNow();
+  };
+
+  const forceLocalOne = async (localId: string) => {
+    await forceLocalPendingSyncOperation(localId);
+    await load();
+    await syncNow();
   };
 
   const qcOps = summary.qcCowUpdate + summary.qcBatchStatusUpdate;
@@ -382,22 +396,61 @@ export default function SyncCenterScreen() {
                     )}
                   </Text>
                 ) : null}
+                <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {row.state === "CONFLICT" ? (
+                    <>
+                      <Pressable
+                        onPress={() => void retryOne(row.localId)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: DairyColors.info,
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.infoSoft,
+                          paddingHorizontal: 10,
+                          paddingVertical: 7,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.info, fontWeight: "700" }}>
+                          {x("Retry Same Version", "उसी वर्ज़न से रीट्राई")}
+                        </Text>
+                      </Pressable>
 
-                <Pressable
-                  onPress={() => void dismissOne(row.localId)}
-                  style={{
-                    marginTop: 8,
-                    alignSelf: "flex-start",
-                    borderWidth: 1,
-                    borderColor: DairyColors.border,
-                    borderRadius: 10,
-                    backgroundColor: DairyColors.surfaceMuted,
-                    paddingHorizontal: 10,
-                    paddingVertical: 7,
-                  }}
-                >
-                  <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>{x("Dismiss", "हटाएं")}</Text>
-                </Pressable>
+                      <Pressable
+                        onPress={() => void forceLocalOne(row.localId)}
+                        style={{
+                          borderWidth: 1,
+                          borderColor: DairyColors.warning,
+                          borderRadius: 10,
+                          backgroundColor: DairyColors.warningSoft,
+                          paddingHorizontal: 10,
+                          paddingVertical: 7,
+                        }}
+                      >
+                        <Text style={{ color: DairyColors.warning, fontWeight: "700" }}>
+                          {x("Force Local Overwrite", "लोकल ओवरराइट करें")}
+                        </Text>
+                      </Pressable>
+                    </>
+                  ) : null}
+
+                  <Pressable
+                    onPress={() => void dismissOne(row.localId)}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.border,
+                      borderRadius: 10,
+                      backgroundColor: DairyColors.surfaceMuted,
+                      paddingHorizontal: 10,
+                      paddingVertical: 7,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.textSecondary, fontWeight: "700" }}>
+                      {row.state === "CONFLICT"
+                        ? x("Use Server Version", "सर्वर वर्ज़न रखें")
+                        : x("Dismiss", "हटाएं")}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
             );
           })

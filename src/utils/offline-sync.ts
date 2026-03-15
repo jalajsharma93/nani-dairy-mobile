@@ -3,14 +3,12 @@ import { Platform } from "react-native";
 import {
   AddDeliveryTaskAddonPayload,
   CreateDeliveryTaskPayload,
-  CreateExpensePayload,
   CreateFeedLogPayload,
-  CreateMedicalTreatmentPayload,
   CreateSalePayload,
   DeliveryTaskApi,
   ExpenseApi,
   FeedApi,
-  GenericTaskStatus,
+  ReconcileSalePayload,
   MilkApi,
   MilkEntryApi,
   QcStatus,
@@ -20,8 +18,11 @@ import {
   TaskApi,
   TreatmentApi,
   UpdateMilkEntriesQcPayload,
+  UpdateGenericTaskStatusPayload,
+  UpdateMedicalTreatmentPayload,
   UpdateFeedLogPayload,
   UpdateDeliveryTaskStatusPayload,
+  UpdateExpensePayload,
 } from "@/src/services/api";
 
 type PendingSyncType =
@@ -47,7 +48,7 @@ type DeliveryTaskStatusPendingPayload = {
 
 type GenericTaskStatusPendingPayload = {
   taskId: string;
-  payload: { status: GenericTaskStatus };
+  payload: UpdateGenericTaskStatusPayload;
 };
 
 type DeliveryTaskCreatePendingPayload = {
@@ -91,21 +92,18 @@ type SaleDeliveryUpdatePendingPayload = {
 
 type SaleReconcileUpdatePendingPayload = {
   saleId: string;
-  payload: {
-    reconciled: boolean;
-    note?: string | null;
-  };
+  payload: ReconcileSalePayload;
 };
 
 type ExpenseSavePendingPayload = {
   expenseId?: string | null;
-  payload: CreateExpensePayload;
+  payload: UpdateExpensePayload;
 };
 
 type TreatmentSavePendingPayload = {
   animalId: string;
   treatmentId?: string | null;
-  payload: CreateMedicalTreatmentPayload;
+  payload: UpdateMedicalTreatmentPayload;
 };
 
 type FeedBulkLogCreatePendingPayload = {
@@ -393,7 +391,7 @@ export async function queueDeliveryTaskCreate(
 
 export async function queueGenericTaskStatus(
   taskId: string,
-  payload: { status: GenericTaskStatus },
+  payload: UpdateGenericTaskStatusPayload,
   error?: string
 ): Promise<void> {
   await enqueue("GENERIC_TASK_STATUS", { taskId, payload }, error);
@@ -470,10 +468,7 @@ export async function queueSaleDeliveryUpdate(
 
 export async function queueSaleReconcileUpdate(
   saleId: string,
-  payload: {
-    reconciled: boolean;
-    note?: string | null;
-  },
+  payload: ReconcileSalePayload,
   error?: string
 ): Promise<void> {
   await enqueue("SALE_RECONCILE_UPDATE", { saleId, payload }, error);
@@ -482,7 +477,7 @@ export async function queueSaleReconcileUpdate(
 export async function queueExpenseSave(
   payload: {
     expenseId?: string | null;
-    payload: CreateExpensePayload;
+    payload: UpdateExpensePayload;
   },
   error?: string
 ): Promise<void> {
@@ -493,7 +488,7 @@ export async function queueTreatmentSave(
   payload: {
     animalId: string;
     treatmentId?: string | null;
-    payload: CreateMedicalTreatmentPayload;
+    payload: UpdateMedicalTreatmentPayload;
   },
   error?: string
 ): Promise<void> {
@@ -578,6 +573,104 @@ export async function requeueConflictSyncOperations(): Promise<void> {
           }
         : row
     )
+  );
+}
+
+function stripExpectedUpdatedAt(row: PendingSyncOperation): PendingSyncPayload {
+  if (row.type === "DELIVERY_TASK_STATUS") {
+    const payload = row.payload as DeliveryTaskStatusPendingPayload;
+    return {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        expectedUpdatedAt: undefined,
+      },
+    };
+  }
+  if (row.type === "GENERIC_TASK_STATUS") {
+    const payload = row.payload as GenericTaskStatusPendingPayload;
+    return {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        expectedUpdatedAt: undefined,
+      },
+    };
+  }
+  if (row.type === "SALE_RECONCILE_UPDATE") {
+    const payload = row.payload as SaleReconcileUpdatePendingPayload;
+    return {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        expectedUpdatedAt: undefined,
+      },
+    };
+  }
+  if (row.type === "EXPENSE_SAVE") {
+    const payload = row.payload as ExpenseSavePendingPayload;
+    return {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        expectedUpdatedAt: undefined,
+      },
+    };
+  }
+  if (row.type === "TREATMENT_SAVE") {
+    const payload = row.payload as TreatmentSavePendingPayload;
+    return {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        expectedUpdatedAt: undefined,
+      },
+    };
+  }
+  if (row.type === "FEED_LOG_UPDATE") {
+    const payload = row.payload as FeedLogUpdatePendingPayload;
+    return {
+      ...payload,
+      payload: {
+        ...payload.payload,
+        expectedUpdatedAt: undefined,
+      },
+    };
+  }
+  return row.payload;
+}
+
+export async function retryPendingSyncOperation(localId: string): Promise<void> {
+  const rows = await readRaw();
+  await writeRaw(
+    rows.map((row) =>
+      row.localId === localId
+        ? {
+            ...row,
+            state: "PENDING",
+            attempts: 0,
+            lastError: row.lastError ?? null,
+          }
+        : row
+    )
+  );
+}
+
+export async function forceLocalPendingSyncOperation(localId: string): Promise<void> {
+  const rows = await readRaw();
+  await writeRaw(
+    rows.map((row) => {
+      if (row.localId !== localId) {
+        return row;
+      }
+      return {
+        ...row,
+        state: "PENDING",
+        attempts: 0,
+        lastError: row.lastError ?? null,
+        payload: stripExpectedUpdatedAt(row),
+      };
+    })
   );
 }
 

@@ -644,6 +644,12 @@ export type CreateSalePayload = {
 
 export type UpdateSalePayload = CreateSalePayload;
 
+export type ReconcileSalePayload = {
+  reconciled: boolean;
+  note?: string | null;
+  expectedUpdatedAt?: string | null;
+};
+
 export type SaleOverrideAuditResponse = {
   saleOverrideAuditId: string;
   saleId: string;
@@ -748,6 +754,7 @@ export type UpdateDeliveryTaskStatusPayload = {
   overrideWithdrawalLock?: boolean | null;
   overrideReason?: string | null;
   notes?: string | null;
+  expectedUpdatedAt?: string | null;
 };
 
 export type UpdateDeliveryTaskStatusBulkItemPayload = {
@@ -1012,7 +1019,9 @@ export type CreateExpensePayload = {
   notes?: string | null;
 };
 
-export type UpdateExpensePayload = CreateExpensePayload;
+export type UpdateExpensePayload = CreateExpensePayload & {
+  expectedUpdatedAt?: string | null;
+};
 
 export type ExpensesSummaryResponse = {
   date: string;
@@ -1318,7 +1327,9 @@ export type CreateFeedLogPayload = {
   notes?: string | null;
 };
 
-export type UpdateFeedLogPayload = CreateFeedLogPayload;
+export type UpdateFeedLogPayload = CreateFeedLogPayload & {
+  expectedUpdatedAt?: string | null;
+};
 
 export type FeedMaterialResponse = {
   feedMaterialId: string;
@@ -1768,6 +1779,10 @@ export type CreateMedicalTreatmentPayload = {
   notes?: string | null;
 };
 
+export type UpdateMedicalTreatmentPayload = CreateMedicalTreatmentPayload & {
+  expectedUpdatedAt?: string | null;
+};
+
 export type TreatmentComplianceSummaryResponse = {
   date: string;
   scopeAnimalId?: string | null;
@@ -1981,6 +1996,11 @@ export type UpdateGenericTaskPayload = {
   status: GenericTaskStatus;
   dueTime?: string | null;
   sourceRefId?: string | null;
+};
+
+export type UpdateGenericTaskStatusPayload = {
+  status: GenericTaskStatus;
+  expectedUpdatedAt?: string | null;
 };
 
 export type GenericTaskTemplateFrequency = "DAILY" | "WEEKLY";
@@ -2831,7 +2851,7 @@ export const SalesApi = {
       `${API_BASE_URL}/api/sales/reconciliation?dateFrom=${dateFrom}&dateTo=${dateTo ?? dateFrom}`
     ),
 
-  reconcile: (saleId: string, payload: { reconciled: boolean; note?: string | null }) =>
+  reconcile: (saleId: string, payload: ReconcileSalePayload) =>
     http<SaleResponse>(`${API_BASE_URL}/api/sales/${saleId}/reconcile`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -3276,7 +3296,7 @@ export const TaskApi = {
       body: JSON.stringify(payload),
     }),
 
-  updateStatus: (taskId: string, payload: { status: GenericTaskStatus }) =>
+  updateStatus: (taskId: string, payload: UpdateGenericTaskStatusPayload) =>
     http<GenericTaskResponse>(`${API_BASE_URL}/api/tasks/${encodeURIComponent(taskId)}/status`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -3417,7 +3437,7 @@ export const TreatmentApi = {
       }
     ),
 
-  update: (animalId: string, treatmentId: string, payload: CreateMedicalTreatmentPayload) =>
+  update: (animalId: string, treatmentId: string, payload: UpdateMedicalTreatmentPayload) =>
     http<MedicalTreatmentResponse>(
       `${API_BASE_URL}/api/animals/${encodeURIComponent(animalId)}/treatments/${encodeURIComponent(
         treatmentId

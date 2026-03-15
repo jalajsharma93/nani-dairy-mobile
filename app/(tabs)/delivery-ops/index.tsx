@@ -1170,6 +1170,7 @@ export default function DeliveryOpsScreen() {
       overrideWithdrawalLock: overrideEnabledForThisUpdate ? true : undefined,
       overrideReason: overrideEnabledForThisUpdate ? deliveryOverrideReason.trim() : undefined,
       notes: options?.notes?.trim() || null,
+      expectedUpdatedAt: task.updatedAt ?? undefined,
     };
 
     try {

@@ -153,18 +153,23 @@ export default function ExpensesScreen() {
       return;
     }
 
+    const editingExpense =
+      editingExpenseId != null
+        ? expenses.find((item) => item.expenseId === editingExpenseId) ?? null
+        : null;
+    const payload = {
+      expenseDate: expenseDate.trim(),
+      category,
+      amount: value,
+      paymentMode,
+      counterparty: counterparty.trim() || null,
+      referenceNo: referenceNo.trim() || null,
+      notes: notes.trim() || null,
+      expectedUpdatedAt: editingExpense?.updatedAt ?? undefined,
+    };
+
     try {
       setSaving(true);
-      const payload = {
-        expenseDate: expenseDate.trim(),
-        category,
-        amount: value,
-        paymentMode,
-        counterparty: counterparty.trim() || null,
-        referenceNo: referenceNo.trim() || null,
-        notes: notes.trim() || null,
-      };
-
       if (editingExpenseId) {
         await ExpenseApi.update(editingExpenseId, payload);
       } else {
@@ -183,15 +188,7 @@ export default function ExpensesScreen() {
         await queueExpenseSave(
           {
             expenseId: editingExpenseId,
-            payload: {
-              expenseDate: expenseDate.trim(),
-              category,
-              amount: value,
-              paymentMode,
-              counterparty: counterparty.trim() || null,
-              referenceNo: referenceNo.trim() || null,
-              notes: notes.trim() || null,
-            },
+            payload,
           },
           String(e?.message ?? "")
         );
