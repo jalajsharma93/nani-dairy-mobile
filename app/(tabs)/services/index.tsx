@@ -235,6 +235,13 @@ export default function ServicesScreen() {
           onPress={() => router.push("/sync")}
         />
 
+        <ServiceCard
+          title={t("profile.notifications")}
+          subtitle={t("profile.notificationsSub")}
+          icon="notifications"
+          onPress={() => router.push("/notifications")}
+        />
+
         {isAdmin ? (
           <ServiceCard
             title={x("User Management", "यूज़र प्रबंधन")}

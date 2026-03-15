@@ -80,6 +80,7 @@ export default function TabLayout() {
     if (routeRoot === "services") return true;
     if (routeRoot === "settings") return true;
     if (routeRoot === "sync") return true;
+    if (routeRoot === "notifications") return true;
     if (routeRoot === "profile") return true;
     return true;
   })();
@@ -315,6 +316,14 @@ export default function TabLayout() {
         name="sync/index"
         options={{
           title: "Sync Center",
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="notifications/index"
+        options={{
+          title: "Notifications",
           href: null,
         }}
       />

@@ -80,6 +80,10 @@ export type ExpenseCategory =
   | "MAINTENANCE"
   | "TRANSPORT"
   | "MISC";
+export type NotificationChannel = "IN_APP" | "PUSH" | "SMS" | "WHATSAPP";
+export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type NotificationDeliveryStatus = "PENDING" | "SENT" | "FAILED";
+export type NotificationAudienceType = "SELF" | "USERNAME" | "ROLE" | "ROLES" | "ALL_ACTIVE";
 
 export type MilkBatchResponse = {
   milkBatchId: string;
@@ -2140,6 +2144,66 @@ export type UploadFilePayload = {
   type: string;
 };
 
+export type NotificationResponse = {
+  notificationId: string;
+  eventType: string;
+  title: string;
+  message: string;
+  priority: NotificationPriority;
+  channel: NotificationChannel;
+  deliveryStatus: NotificationDeliveryStatus;
+  recipientUsername: string;
+  recipientRole: UserRole;
+  sourceRefId?: string | null;
+  metadataJson?: string | null;
+  readAt?: string | null;
+  deliveredAt?: string | null;
+  retryCount: number;
+  maxRetries: number;
+  lastError?: string | null;
+  createdBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  read: boolean;
+};
+
+export type CreateNotificationPayload = {
+  eventType: string;
+  title: string;
+  message: string;
+  priority?: NotificationPriority;
+  channel?: NotificationChannel;
+  audienceType?: NotificationAudienceType;
+  recipientUsername?: string | null;
+  recipientRole?: UserRole | null;
+  recipientRoles?: UserRole[] | null;
+  sourceRefId?: string | null;
+  metadataJson?: string | null;
+  maxRetries?: number | null;
+};
+
+export type NotificationCreateResultResponse = {
+  audienceType: NotificationAudienceType;
+  recipientCount: number;
+  createdCount: number;
+  sentCount: number;
+  failedCount: number;
+  notifications: NotificationResponse[];
+};
+
+export type NotificationMarkAllReadResponse = {
+  recipientUsername: string;
+  markedCount: number;
+  readAt: string;
+};
+
+export type NotificationUnreadCountResponse = {
+  allRecipients: boolean;
+  recipientUsername?: string | null;
+  recipientRole?: UserRole | null;
+  unreadCount: number;
+};
+
 export function setApiAuthToken(token: string | null) {
   AUTH_TOKEN = token;
 }
@@ -3337,6 +3401,85 @@ export const TaskApi = {
       }
     );
   },
+};
+
+export const NotificationApi = {
+  list: (params?: {
+    allRecipients?: boolean;
+    recipientUsername?: string;
+    recipientRole?: UserRole;
+    eventType?: string;
+    priority?: NotificationPriority;
+    channel?: NotificationChannel;
+    deliveryStatus?: NotificationDeliveryStatus;
+    read?: boolean;
+    limit?: number;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.allRecipients != null) search.set("allRecipients", String(params.allRecipients));
+    if (params?.recipientUsername) search.set("recipientUsername", params.recipientUsername);
+    if (params?.recipientRole) search.set("recipientRole", params.recipientRole);
+    if (params?.eventType) search.set("eventType", params.eventType);
+    if (params?.priority) search.set("priority", params.priority);
+    if (params?.channel) search.set("channel", params.channel);
+    if (params?.deliveryStatus) search.set("deliveryStatus", params.deliveryStatus);
+    if (params?.read != null) search.set("read", String(params.read));
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return http<NotificationResponse[]>(
+      `${API_BASE_URL}/api/notifications${query ? `?${query}` : ""}`
+    );
+  },
+
+  create: (payload: CreateNotificationPayload) =>
+    http<NotificationCreateResultResponse>(`${API_BASE_URL}/api/notifications`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  markRead: (notificationId: string) =>
+    http<NotificationResponse>(
+      `${API_BASE_URL}/api/notifications/${encodeURIComponent(notificationId)}/read`,
+      {
+        method: "POST",
+      }
+    ),
+
+  markAllRead: (params?: { allRecipients?: boolean; recipientUsername?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.allRecipients != null) search.set("allRecipients", String(params.allRecipients));
+    if (params?.recipientUsername) search.set("recipientUsername", params.recipientUsername);
+    const query = search.toString();
+    return http<NotificationMarkAllReadResponse>(
+      `${API_BASE_URL}/api/notifications/read-all${query ? `?${query}` : ""}`,
+      {
+        method: "POST",
+      }
+    );
+  },
+
+  unreadCount: (params?: {
+    allRecipients?: boolean;
+    recipientUsername?: string;
+    recipientRole?: UserRole;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.allRecipients != null) search.set("allRecipients", String(params.allRecipients));
+    if (params?.recipientUsername) search.set("recipientUsername", params.recipientUsername);
+    if (params?.recipientRole) search.set("recipientRole", params.recipientRole);
+    const query = search.toString();
+    return http<NotificationUnreadCountResponse>(
+      `${API_BASE_URL}/api/notifications/unread-count${query ? `?${query}` : ""}`
+    );
+  },
+
+  retry: (notificationId: string) =>
+    http<NotificationResponse>(
+      `${API_BASE_URL}/api/notifications/${encodeURIComponent(notificationId)}/retry`,
+      {
+        method: "POST",
+      }
+    ),
 };
 
 export const HealthApi = {
