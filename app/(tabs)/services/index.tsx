@@ -62,6 +62,8 @@ export default function ServicesScreen() {
   const canOpenSales = permissions.canSalesChecklist;
   const canOpenExpenses = permissions.isAdmin;
   const canOpenStock = permissions.canStock;
+  const canOpenIntegrations = permissions.isAdmin || permissions.isManager;
+  const canOpenReadiness = permissions.isAdmin || permissions.isManager;
 
   return (
     <ScrollView
@@ -208,6 +210,40 @@ export default function ServicesScreen() {
             )}
             icon="layers"
             onPress={() => router.push("/stock")}
+          />
+        ) : null}
+
+        {canOpenIntegrations ? (
+          <ServiceCard
+            title={x("Integration Ops", "इंटीग्रेशन ऑप्स")}
+            subtitle={x(
+              "Connector dashboard, device mapping, ingest errors, token rotation",
+              "कनेक्टर डैशबोर्ड, डिवाइस मैपिंग, इनजेस्ट त्रुटि, टोकन रोटेशन"
+            )}
+            icon="hardware-chip"
+            onPress={() => router.push("/integrations")}
+          />
+        ) : null}
+
+        <ServiceCard
+          title={x("Governance", "गवर्नेंस")}
+          subtitle={x(
+            "Approval inbox and immutable audit timeline",
+            "अप्रूवल इनबॉक्स और इम्यूटेबल ऑडिट टाइमलाइन"
+          )}
+          icon="shield-checkmark"
+          onPress={() => router.push("/governance")}
+        />
+
+        {canOpenReadiness ? (
+          <ServiceCard
+            title={x("Release Readiness", "रिलीज़ रेडीनेस")}
+            subtitle={x(
+              "Beta checklist, error hooks, backup and recovery SOP visibility",
+              "बीटा चेकलिस्ट, एरर हुक, बैकअप और रिकवरी SOP"
+            )}
+            icon="checkmark-done-circle"
+            onPress={() => router.push("/readiness")}
           />
         ) : null}
 

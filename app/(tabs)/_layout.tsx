@@ -54,6 +54,8 @@ export default function TabLayout() {
   const canStockAccess = permissions.canStock;
   const canTaskManager = permissions.canTaskManager;
   const canWorklistAccess = permissions.canWorklist;
+  const canIntegrationAccess = permissions.isAdmin || permissions.isManager;
+  const canReadinessAccess = permissions.isAdmin || permissions.isManager;
   const routeRoot = (() => {
     const first = pathname.split("/").filter(Boolean)[0];
     return first ?? "index";
@@ -82,6 +84,9 @@ export default function TabLayout() {
     if (routeRoot === "sync") return true;
     if (routeRoot === "notifications") return true;
     if (routeRoot === "profile") return true;
+    if (routeRoot === "integrations") return canIntegrationAccess;
+    if (routeRoot === "governance") return true;
+    if (routeRoot === "readiness") return canReadinessAccess;
     return true;
   })();
   if (!routeAllowed) {
@@ -332,6 +337,30 @@ export default function TabLayout() {
         name="profile/index"
         options={{
           title: t("tabs.profile"),
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="integrations/index"
+        options={{
+          title: "Integrations",
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="governance/index"
+        options={{
+          title: "Governance",
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="readiness/index"
+        options={{
+          title: "Readiness",
           href: null,
         }}
       />

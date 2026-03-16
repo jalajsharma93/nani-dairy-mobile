@@ -84,6 +84,10 @@ export type NotificationChannel = "IN_APP" | "PUSH" | "SMS" | "WHATSAPP";
 export type NotificationPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type NotificationDeliveryStatus = "PENDING" | "SENT" | "FAILED";
 export type NotificationAudienceType = "SELF" | "USERNAME" | "ROLE" | "ROLES" | "ALL_ACTIVE";
+export type IntegrationConnectorType = "RFID" | "MILK_ANALYZER" | "WEIGH_SCALE" | "IOT_GATEWAY" | "CUSTOM";
+export type IntegrationConnectorStatus = "ACTIVE" | "INACTIVE";
+export type IntegrationIngestStatus = "RECEIVED" | "NORMALIZED" | "FAILED";
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 
 export type MilkBatchResponse = {
   milkBatchId: string;
@@ -2119,6 +2123,132 @@ export type AuthUserAuditResponse = {
   createdAt: string;
 };
 
+export type IntegrationConnectorResponse = {
+  connectorId: string;
+  connectorKey: string;
+  name: string;
+  connectorType: IntegrationConnectorType;
+  status: IntegrationConnectorStatus;
+  allowedSource?: string | null;
+  createdBy?: string | null;
+  lastSeenAt?: string | null;
+  lastError?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  provisioningToken?: string | null;
+};
+
+export type IntegrationConnectorMetricsResponse = {
+  connectorId: string;
+  connectorKey: string;
+  name: string;
+  connectorType: IntegrationConnectorType;
+  status: IntegrationConnectorStatus;
+  lastSeenAt?: string | null;
+  lastError?: string | null;
+  totalEvents: number;
+  normalizedEvents: number;
+  failedEvents: number;
+};
+
+export type IntegrationMonitoringResponse = {
+  generatedAt?: string | null;
+  totalEvents: number;
+  normalizedEvents: number;
+  failedEvents: number;
+  last24hEvents: number;
+  last24hFailedEvents: number;
+  activeConnectors: number;
+  inactiveConnectors: number;
+  connectors: IntegrationConnectorMetricsResponse[];
+};
+
+export type IntegrationEventResponse = {
+  integrationEventId: string;
+  connectorId: string;
+  connectorKey: string;
+  connectorType: IntegrationConnectorType;
+  externalEventId?: string | null;
+  deviceId?: string | null;
+  eventType?: string | null;
+  sourceIp?: string | null;
+  status: IntegrationIngestStatus;
+  errorMessage?: string | null;
+  occurredAt?: string | null;
+  receivedAt?: string | null;
+  processedAt?: string | null;
+  rawPayloadJson?: string | null;
+  normalizedPayloadJson?: string | null;
+};
+
+export type CreateIntegrationConnectorPayload = {
+  name: string;
+  connectorType: IntegrationConnectorType;
+  connectorKey?: string | null;
+  allowedSource?: string | null;
+};
+
+export type UpdateIntegrationConnectorStatusPayload = {
+  status: IntegrationConnectorStatus;
+  reason?: string | null;
+};
+
+export type RotateConnectorTokenResponse = {
+  connectorId: string;
+  connectorKey: string;
+  provisioningToken: string;
+  rotatedAt?: string | null;
+};
+
+export type ApprovalRequestResponse = {
+  approvalRequestId: string;
+  module: string;
+  actionType: string;
+  targetRefId?: string | null;
+  status: ApprovalStatus;
+  requiredApproverRole: UserRole;
+  requestedByUsername: string;
+  requestedByRole: UserRole;
+  requestReason: string;
+  requestPayloadJson?: string | null;
+  decisionNote?: string | null;
+  approvedByUsername?: string | null;
+  approvedByRole?: UserRole | null;
+  decidedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type CreateApprovalRequestPayload = {
+  module: string;
+  actionType: string;
+  targetRefId?: string | null;
+  requiredApproverRole?: UserRole | null;
+  requestReason: string;
+  requestPayloadJson?: string | null;
+};
+
+export type ApprovalDecisionPayload = {
+  decisionNote?: string | null;
+};
+
+export type AuditEventResponse = {
+  auditEventId: string;
+  module: string;
+  actionType: string;
+  targetRefId?: string | null;
+  actorUsername: string;
+  actorRole: string;
+  payloadJson?: string | null;
+  createdAt?: string | null;
+};
+
+export type SystemHealthResponse = {
+  status: string;
+  groups?: string[];
+  [key: string]: any;
+};
+
 export type LoginPayload = {
   username: string;
   password: string;
@@ -3480,6 +3610,118 @@ export const NotificationApi = {
         method: "POST",
       }
     ),
+};
+
+export const IntegrationApi = {
+  connectors: (params?: {
+    status?: IntegrationConnectorStatus;
+    connectorType?: IntegrationConnectorType;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.connectorType) search.set("connectorType", params.connectorType);
+    const query = search.toString();
+    return http<IntegrationConnectorResponse[]>(
+      `${API_BASE_URL}/api/integrations/connectors${query ? `?${query}` : ""}`
+    );
+  },
+
+  createConnector: (payload: CreateIntegrationConnectorPayload) =>
+    http<IntegrationConnectorResponse>(`${API_BASE_URL}/api/integrations/connectors`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateConnectorStatus: (connectorId: string, payload: UpdateIntegrationConnectorStatusPayload) =>
+    http<IntegrationConnectorResponse>(
+      `${API_BASE_URL}/api/integrations/connectors/${encodeURIComponent(connectorId)}/status`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  rotateConnectorToken: (connectorId: string) =>
+    http<RotateConnectorTokenResponse>(
+      `${API_BASE_URL}/api/integrations/connectors/${encodeURIComponent(connectorId)}/rotate-token`,
+      {
+        method: "POST",
+      }
+    ),
+
+  events: (params?: {
+    connectorId?: string;
+    status?: IntegrationIngestStatus;
+    sinceHours?: number;
+    limit?: number;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.connectorId) search.set("connectorId", params.connectorId);
+    if (params?.status) search.set("status", params.status);
+    if (params?.sinceHours != null) search.set("sinceHours", String(params.sinceHours));
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return http<IntegrationEventResponse[]>(
+      `${API_BASE_URL}/api/integrations/events${query ? `?${query}` : ""}`
+    );
+  },
+
+  monitoring: (windowHours?: number) => {
+    const search = new URLSearchParams();
+    if (windowHours != null) {
+      search.set("windowHours", String(windowHours));
+    }
+    const query = search.toString();
+    return http<IntegrationMonitoringResponse>(
+      `${API_BASE_URL}/api/integrations/monitoring${query ? `?${query}` : ""}`
+    );
+  },
+};
+
+export const GovernanceApi = {
+  approvals: (status?: ApprovalStatus) =>
+    http<ApprovalRequestResponse[]>(
+      `${API_BASE_URL}/api/governance/approvals${status ? `?status=${encodeURIComponent(status)}` : ""}`
+    ),
+
+  requestApproval: (payload: CreateApprovalRequestPayload) =>
+    http<ApprovalRequestResponse>(`${API_BASE_URL}/api/governance/approvals/request`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  approve: (approvalRequestId: string, payload?: ApprovalDecisionPayload) =>
+    http<ApprovalRequestResponse>(
+      `${API_BASE_URL}/api/governance/approvals/${encodeURIComponent(approvalRequestId)}/approve`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      }
+    ),
+
+  reject: (approvalRequestId: string, payload?: ApprovalDecisionPayload) =>
+    http<ApprovalRequestResponse>(
+      `${API_BASE_URL}/api/governance/approvals/${encodeURIComponent(approvalRequestId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      }
+    ),
+
+  audits: (params?: { module?: string; targetRefId?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.module) search.set("module", params.module);
+    if (params?.targetRefId) search.set("targetRefId", params.targetRefId);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    const query = search.toString();
+    return http<AuditEventResponse[]>(
+      `${API_BASE_URL}/api/governance/audits${query ? `?${query}` : ""}`
+    );
+  },
+};
+
+export const ReadinessApi = {
+  health: () => http<SystemHealthResponse>(`${API_BASE_URL}/actuator/health`),
 };
 
 export const HealthApi = {
