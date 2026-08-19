@@ -1,50 +1,55 @@
-# Welcome to your Expo app 👋
+# NANI Dairy Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Expo/React Native mobile app for NANI Dairy operations.
 
-## Get started
+The app covers milk collection, QC, animals, breeding, health, treatments, feed, stock, customers, sales, delivery operations, employees, tasks, notifications, integrations, governance, sync, and release readiness.
 
-1. Install dependencies
+## Docs
 
-   ```bash
-   npm install
-   ```
+- `docs/PHASE_2_COMPLETION.md`: Phase 2 completion scope, acceptance checks, and remaining work.
+- `docs/FEATURE_STATUS.md`: Current module-by-module implementation status.
+- `docs/TASK_BACKLOG.md`: Completed Phase 2 items plus Phase 3/deferred backlog.
+- `docs/DEVELOPER_RUNBOOK.md`: Local setup, verification commands, and production-readiness notes.
 
-2. Start the app
+## Local Setup
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Install dependencies:
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Start the app:
 
-## Learn more
+```bash
+npx expo start
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Run checks:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npm run -s lint
+npx tsc --noEmit
+```
 
-## Join the community
+## Backend
 
-Join our community of developers creating universal apps.
+Expected backend workspace:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```text
+/Users/jalajsharma/Projects/NaniDairy/nani-dairy-backend
+```
+
+Default local backend URL:
+
+```text
+http://localhost:8080
+```
+
+The app can be pointed at another backend with:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL=http://HOST:8080 npx expo start
+```
+
+See `docs/DEVELOPER_RUNBOOK.md` for the full local workflow.

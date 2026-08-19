@@ -1,6 +1,6 @@
 # NANI Dairy Task Backlog
 
-Last updated: March 14, 2026.
+Last updated: August 19, 2026.
 
 ## Completed Phase 2 Core
 - [x] Phase 2.1: Subscription billing depth
@@ -12,20 +12,20 @@ Last updated: March 14, 2026.
 - [x] Phase 2.3: Inventory forecasting (30/90 day)
 - [x] Phase 2.4: Task automation (recurring templates, escalation, reminders, manual run + summary)
 
-## Partial Modules To Close
-- [ ] Fine-grained action-level role policies
-- [ ] QC advanced lab parameters + approval hardening
-- [ ] Animal lifecycle constraints and genealogy workflows
+## Completed Phase 2 Closeout
+- [x] Fine-grained action-level role policies
+- [x] QC advanced lab parameters + approval hardening
+- [x] Animal lifecycle constraints and genealogy workflows
 - [x] Health protocol engine by age/lactation
-- [ ] Breeding KPI analytics
+- [x] Breeding KPI analytics
 - [x] Treatment protocol templates + stronger evidence flow
-- [ ] Feed optimization and intake-vs-yield intelligence
+- [x] Feed optimization and intake-vs-yield intelligence
 - [x] Feed procurement automation and reorder planning
 - [x] Sales invoice lifecycle and exception approvals
-- [ ] Fully automated delivery-to-stock closure orchestration
-- [ ] Employee payslip PDF + finalized payout workflow
-- [ ] Offline conflict resolution and merge policy
-- [ ] Final i18n QA for edge strings
+- [x] Fully automated delivery-to-stock closure orchestration
+- [x] Employee payslip export + finalized payout workflow
+- [x] Offline conflict resolution and merge policy
+- [x] Final i18n QA for edge strings
 
 ## Phase 3
 - [ ] Notification system (push/SMS/WhatsApp)

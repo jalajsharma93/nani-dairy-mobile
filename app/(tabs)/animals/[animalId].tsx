@@ -237,6 +237,47 @@ export default function AnimalDetailsScreen() {
   }, [animal?.status, profitability, x]);
   const offspringPreview = useMemo(() => offspring.slice(0, 8), [offspring]);
   const lifecyclePreview = useMemo(() => lifecycleHistory.slice(0, 10), [lifecycleHistory]);
+  const lineageQuality = useMemo(() => {
+    const notes: { tone: "success" | "warning" | "danger"; textEn: string; textHi: string }[] = [];
+
+    if (!animal?.motherAnimalId && !animal?.sireTag) {
+      notes.push({
+        tone: "warning",
+        textEn: "Parentage is incomplete. Add mother and sire/bull references when known.",
+        textHi: "माता-पिता जानकारी अधूरी है। जानकारी हो तो मां और सायर/बैल रेफरेंस जोड़ें।",
+      });
+    } else if (!animal?.motherAnimalId || !animal?.sireTag) {
+      notes.push({
+        tone: "warning",
+        textEn: "One parent reference is missing. Complete lineage improves genealogy reports.",
+        textHi: "एक parent रेफरेंस अधूरा है। पूरी lineage से genealogy रिपोर्ट बेहतर होती है।",
+      });
+    } else {
+      notes.push({
+        tone: "success",
+        textEn: "Parentage is complete for this animal.",
+        textHi: "इस जानवर की parentage पूरी है।",
+      });
+    }
+
+    if ((animal?.status === "SOLD" || animal?.status === "DEAD") && animal.isActive) {
+      notes.push({
+        tone: "danger",
+        textEn: "Terminal lifecycle status should be inactive.",
+        textHi: "अंतिम lifecycle status में animal inactive होना चाहिए।",
+      });
+    }
+
+    if (lifecycleHistory.length === 0) {
+      notes.push({
+        tone: "warning",
+        textEn: "No lifecycle transition audit has been recorded yet.",
+        textHi: "अभी कोई lifecycle transition audit रिकॉर्ड नहीं है।",
+      });
+    }
+
+    return notes;
+  }, [animal, lifecycleHistory.length]);
 
   const tone = statusTone(animal?.status);
   const profitabilityConfidenceTone = profitability ? confidenceTone(profitability.confidence) : null;
@@ -485,6 +526,45 @@ export default function AnimalDetailsScreen() {
             ))}
           </View>
         )}
+
+        <View
+          style={{
+            marginTop: 12,
+            borderWidth: 1,
+            borderColor: DairyColors.border,
+            borderRadius: 10,
+            backgroundColor: DairyColors.surfaceMuted,
+            padding: 10,
+          }}
+        >
+          <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+            {x("Lineage Quality", "Lineage गुणवत्ता")}
+          </Text>
+          {lineageQuality.map((note) => {
+            const noteColor =
+              note.tone === "success"
+                ? DairyColors.success
+                : note.tone === "danger"
+                  ? DairyColors.danger
+                  : DairyColors.warning;
+            return (
+              <View
+                key={note.textEn}
+                style={{ marginTop: 7, flexDirection: "row", alignItems: "flex-start", gap: 6 }}
+              >
+                <Ionicons
+                  name={note.tone === "success" ? "checkmark-circle" : "alert-circle"}
+                  size={16}
+                  color={noteColor}
+                  style={{ marginTop: 1 }}
+                />
+                <Text style={{ flex: 1, color: DairyColors.textSecondary }}>
+                  {x(note.textEn, note.textHi)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
       </View>
 
       <View
