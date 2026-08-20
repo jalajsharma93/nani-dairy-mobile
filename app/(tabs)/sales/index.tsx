@@ -53,6 +53,7 @@ const DEFAULT_CUSTOMERS = [
 const ISO_MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const amount = (value: number) => `Rs ${value.toFixed(2)}`;
+type SalesListFilter = "ALL" | "RECEIVED" | "PENDING";
 
 function paymentTone(status: SaleResponse["paymentStatus"]) {
   if (status === "PAID") {
@@ -105,6 +106,7 @@ export default function SalesScreen() {
   const isDeliveryOnly = canDeliveryChecklist && !canManageSales;
 
   const [sales, setSales] = useState<SaleResponse[]>([]);
+  const [listFilter, setListFilter] = useState<SalesListFilter>("ALL");
   const [deliveryItems, setDeliveryItems] = useState<DeliveryChecklistItemResponse[]>([]);
   const [deliveryTasks, setDeliveryTasks] = useState<DeliveryTaskResponse[]>([]);
   const [customerRecords, setCustomerRecords] = useState<CustomerRecordResponse[]>([]);
@@ -207,6 +209,21 @@ export default function SalesScreen() {
     () => customerRecords.filter((row) => row.isActive && row.subscriptionActive),
     [customerRecords]
   );
+  const filteredSales = useMemo(() => {
+    if (listFilter === "RECEIVED") {
+      return sales.filter((sale) => sale.receivedAmount > 0);
+    }
+    if (listFilter === "PENDING") {
+      return sales.filter((sale) => sale.pendingAmount > 0);
+    }
+    return sales;
+  }, [listFilter, sales]);
+
+  const listFilterLabel = (filter: SalesListFilter) => {
+    if (filter === "RECEIVED") return x("Received", "मिला भुगतान");
+    if (filter === "PENDING") return x("Pending", "बाकी");
+    return x("Revenue", "कुल आय");
+  };
   const selectedSaleCustomer = useMemo(() => {
     if (customerId?.trim()) {
       return customerRecords.find((row) => row.customerId === customerId) ?? null;
@@ -1784,18 +1801,51 @@ export default function SalesScreen() {
 
       {canManageSales ? (
         <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-        <View style={{ flex: 1, minWidth: 140, backgroundColor: DairyColors.accentSoft, borderRadius: 12, padding: 10 }}>
+        <Pressable
+          onPress={() => setListFilter("ALL")}
+          style={{
+            flex: 1,
+            minWidth: 140,
+            borderWidth: 1,
+            borderColor: listFilter === "ALL" ? DairyColors.primary : "transparent",
+            backgroundColor: listFilter === "ALL" ? DairyColors.primarySoft : DairyColors.accentSoft,
+            borderRadius: 12,
+            padding: 10,
+          }}
+        >
           <Text style={{ color: DairyColors.textSecondary }}>{x("Revenue", "कुल आय")}</Text>
           <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{amount(summary?.totalRevenue ?? 0)}</Text>
-        </View>
-        <View style={{ flex: 1, minWidth: 140, backgroundColor: DairyColors.successSoft, borderRadius: 12, padding: 10 }}>
+        </Pressable>
+        <Pressable
+          onPress={() => setListFilter("RECEIVED")}
+          style={{
+            flex: 1,
+            minWidth: 140,
+            borderWidth: 1,
+            borderColor: listFilter === "RECEIVED" ? DairyColors.primary : "transparent",
+            backgroundColor: listFilter === "RECEIVED" ? DairyColors.primarySoft : DairyColors.successSoft,
+            borderRadius: 12,
+            padding: 10,
+          }}
+        >
           <Text style={{ color: DairyColors.textSecondary }}>{x("Received", "मिला भुगतान")}</Text>
           <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{amount(summary?.totalReceived ?? 0)}</Text>
-        </View>
-        <View style={{ flex: 1, minWidth: 140, backgroundColor: DairyColors.warningSoft, borderRadius: 12, padding: 10 }}>
+        </Pressable>
+        <Pressable
+          onPress={() => setListFilter("PENDING")}
+          style={{
+            flex: 1,
+            minWidth: 140,
+            borderWidth: 1,
+            borderColor: listFilter === "PENDING" ? DairyColors.primary : "transparent",
+            backgroundColor: listFilter === "PENDING" ? DairyColors.primarySoft : DairyColors.warningSoft,
+            borderRadius: 12,
+            padding: 10,
+          }}
+        >
           <Text style={{ color: DairyColors.textSecondary }}>{x("Pending", "बाकी")}</Text>
           <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{amount(summary?.totalPending ?? 0)}</Text>
-        </View>
+        </Pressable>
         </View>
       ) : null}
 
@@ -3493,14 +3543,17 @@ export default function SalesScreen() {
         <Text style={{ fontWeight: "800", color: DairyColors.textPrimary }}>
           {x(`Sales History (${dispatchDate})`, `बिक्री इतिहास (${dispatchDate})`)}
         </Text>
-        {sales.length === 0 ? (
+        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+          {x(`Showing: ${listFilterLabel(listFilter)}`, `दिखा रहे हैं: ${listFilterLabel(listFilter)}`)}
+        </Text>
+        {filteredSales.length === 0 ? (
           <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
             {loading
               ? x("Loading sales...", "बिक्री लोड हो रही है...")
               : x("No sales found for selected date.", "चुनी हुई तारीख के लिए कोई बिक्री नहीं मिली।")}
           </Text>
         ) : (
-          sales.map((item) => {
+          filteredSales.map((item) => {
             const tone = paymentTone(item.paymentStatus);
             const isCooperativeMilkSale =
               item.customerType === "COOPERATIVE" && item.productType === "MILK";

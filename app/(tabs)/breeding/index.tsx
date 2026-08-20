@@ -24,6 +24,7 @@ import { DateInput } from "../../../components/date-input";
 const PREGNANCY_OPTIONS: BreedingPregnancyResult[] = ["PENDING", "PREGNANT", "NOT_PREGNANT"];
 const CALF_GENDER_OPTIONS: BreedingCalfGender[] = ["MALE", "FEMALE", "UNKNOWN"];
 const CALVING_OUTCOME_OPTIONS: BreedingCalvingOutcome[] = ["LIVE", "STILLBIRTH", "ABORTION", "UNKNOWN"];
+type BreedingTimelineFilter = "ALL" | "CALVING_DUE_TODAY" | "CALVING_DUE_SOON" | "CALVING_OVERDUE" | "OPEN_PREGNANCIES";
 
 function isIsoDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -142,6 +143,7 @@ export default function BreedingScreen() {
   const [summary, setSummary] = useState<BreedingSummaryResponse | null>(null);
   const [kpis, setKpis] = useState<BreedingKpiSummaryResponse | null>(null);
   const [events, setEvents] = useState<BreedingEventResponse[]>([]);
+  const [timelineFilter, setTimelineFilter] = useState<BreedingTimelineFilter>("ALL");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
@@ -207,6 +209,38 @@ export default function BreedingScreen() {
     });
     return counts;
   }, [date, events]);
+
+  const filteredEvents = useMemo(() => {
+    const dueSoonEnd = addDaysIso(date, 7);
+    if (timelineFilter === "CALVING_DUE_TODAY") {
+      return events.filter((row) => row.expectedCalvingDate === date && !row.actualCalvingDate);
+    }
+    if (timelineFilter === "CALVING_DUE_SOON") {
+      return events.filter(
+        (row) =>
+          !!dueSoonEnd &&
+          !!row.expectedCalvingDate &&
+          row.expectedCalvingDate > date &&
+          row.expectedCalvingDate <= dueSoonEnd &&
+          !row.actualCalvingDate
+      );
+    }
+    if (timelineFilter === "CALVING_OVERDUE") {
+      return events.filter((row) => !!row.expectedCalvingDate && row.expectedCalvingDate < date && !row.actualCalvingDate);
+    }
+    if (timelineFilter === "OPEN_PREGNANCIES") {
+      return events.filter((row) => row.pregnancyResult === "PREGNANT" && !row.actualCalvingDate);
+    }
+    return events;
+  }, [date, events, timelineFilter]);
+
+  const timelineFilterLabel = (filter: BreedingTimelineFilter) => {
+    if (filter === "CALVING_DUE_TODAY") return x("Calving Due Today", "आज बछड़ा देय");
+    if (filter === "CALVING_DUE_SOON") return x("Calving Due Soon", "जल्द बछड़ा देय");
+    if (filter === "CALVING_OVERDUE") return x("Calving Overdue", "बछड़ा देरी");
+    if (filter === "OPEN_PREGNANCIES") return x("Open Pregnancies", "चल रही गर्भावस्था");
+    return x("All Timeline", "सभी टाइमलाइन");
+  };
 
   const conceptionTrendMax = useMemo(
     () => Math.max(100, ...(kpis?.conceptionTrend ?? []).map((p) => p.value || 0)),
@@ -679,37 +713,44 @@ export default function BreedingScreen() {
       <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
         {[
           {
+            filter: "CALVING_DUE_TODAY" as BreedingTimelineFilter,
             label: x("Calving Due Today", "आज बछड़ा देय"),
             value: summary?.calvingDueToday ?? 0,
           },
           {
+            filter: "CALVING_DUE_SOON" as BreedingTimelineFilter,
             label: x("Calving Due Soon", "जल्द बछड़ा देय"),
             value: summary?.calvingDueSoon ?? 0,
           },
           {
+            filter: "CALVING_OVERDUE" as BreedingTimelineFilter,
             label: x("Calving Overdue", "बछड़ा देरी"),
             value: summary?.calvingOverdue ?? 0,
           },
           {
+            filter: "OPEN_PREGNANCIES" as BreedingTimelineFilter,
             label: x("Open Pregnancies", "चल रही गर्भावस्था"),
             value: summary?.openPregnancies ?? 0,
           },
         ].map((card) => {
           const tone = numberTone(card.value);
           return (
-            <View
+            <Pressable
               key={card.label}
+              onPress={() => setTimelineFilter(card.filter)}
               style={{
                 flex: 1,
                 minWidth: 150,
+                borderWidth: 1,
+                borderColor: timelineFilter === card.filter ? DairyColors.primary : "transparent",
                 borderRadius: 12,
-                backgroundColor: tone.background,
+                backgroundColor: timelineFilter === card.filter ? DairyColors.primarySoft : tone.background,
                 padding: 10,
               }}
             >
               <Text style={{ color: DairyColors.textSecondary }}>{card.label}</Text>
               <Text style={{ marginTop: 4, color: tone.text, fontWeight: "800", fontSize: 20 }}>{card.value}</Text>
-            </View>
+            </Pressable>
           );
         })}
       </View>
@@ -1385,14 +1426,39 @@ export default function BreedingScreen() {
         <Text style={{ color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
           {x("Breeding Timeline", "प्रजनन टाइमलाइन")}
         </Text>
-        {events.length === 0 ? (
+        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+          {x(`Showing: ${timelineFilterLabel(timelineFilter)}`, `दिखा रहे हैं: ${timelineFilterLabel(timelineFilter)}`)}
+        </Text>
+        <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {(["ALL", "CALVING_DUE_TODAY", "CALVING_DUE_SOON", "CALVING_OVERDUE", "OPEN_PREGNANCIES"] as BreedingTimelineFilter[]).map(
+            (entry) => (
+              <Pressable
+                key={entry}
+                onPress={() => setTimelineFilter(entry)}
+                style={{
+                  borderWidth: 1,
+                  borderColor: timelineFilter === entry ? DairyColors.primary : DairyColors.border,
+                  backgroundColor: timelineFilter === entry ? DairyColors.primarySoft : DairyColors.surface,
+                  borderRadius: 10,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                }}
+              >
+                <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
+                  {timelineFilterLabel(entry)}
+                </Text>
+              </Pressable>
+            )
+          )}
+        </View>
+        {filteredEvents.length === 0 ? (
           <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
             {loading
               ? x("Loading...", "लोड हो रहा है...")
               : x("No breeding records for selected animal.", "चुने हुए जानवर के लिए प्रजनन रिकॉर्ड नहीं है।")}
           </Text>
         ) : (
-          events.map((row) => {
+          filteredEvents.map((row) => {
             const rowNextAction = resolveNextAction(row, date);
             return (
               <View

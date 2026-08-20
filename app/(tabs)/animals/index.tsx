@@ -20,6 +20,7 @@ import { DateInput } from "../../../components/date-input";
 const STATUS_OPTIONS: AnimalStatus[] = ["LACTATING", "DRY", "SICK", "RETIRED", "DEAD", "SOLD"];
 const GROWTH_STAGE_OPTIONS: AnimalGrowthStage[] = ["CALF", "GROWER", "ADULT"];
 const BREED_OPTIONS = ["Gir", "Sahiwal", "Desi", "Jersey", "HF", "Buffalo", "Other"] as const;
+type AnimalListFilter = "ALL" | "LACTATING" | "ACTIVE";
 
 type Tone = {
   text: string;
@@ -62,6 +63,7 @@ export default function AnimalsScreen() {
   const canEditAnimals = permissions.canEditAnimal;
 
   const [animals, setAnimals] = useState<AnimalResponse[]>([]);
+  const [listFilter, setListFilter] = useState<AnimalListFilter>("ALL");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [profitabilityLoading, setProfitabilityLoading] = useState(false);
@@ -504,6 +506,22 @@ export default function AnimalsScreen() {
     return { total, lactating, active };
   }, [animals]);
 
+  const filteredAnimals = useMemo(() => {
+    if (listFilter === "LACTATING") {
+      return animals.filter((animal) => animal.status === "LACTATING");
+    }
+    if (listFilter === "ACTIVE") {
+      return animals.filter((animal) => animal.isActive);
+    }
+    return animals;
+  }, [animals, listFilter]);
+
+  const listFilterLabel = (filter: AnimalListFilter) => {
+    if (filter === "LACTATING") return x("Lactating", "दूध दे रहे");
+    if (filter === "ACTIVE") return x("Active", "सक्रिय");
+    return x("Total", "कुल");
+  };
+
   const topContributors = useMemo(
     () => (herdProfitability?.items ?? []).filter((row) => row.estimatedNet > 0).slice(0, 4),
     [herdProfitability]
@@ -546,7 +564,7 @@ export default function AnimalsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
-        data={animals}
+        data={filteredAnimals}
         keyExtractor={(item) => item.animalId}
         contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
@@ -645,18 +663,51 @@ export default function AnimalsScreen() {
             ) : null}
 
             <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.accentSoft, borderRadius: 12, padding: 10 }}>
+              <Pressable
+                onPress={() => setListFilter("ALL")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "ALL" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "ALL" ? DairyColors.primarySoft : DairyColors.accentSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Total", "कुल")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.total}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.successSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("LACTATING")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "LACTATING" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "LACTATING" ? DairyColors.primarySoft : DairyColors.successSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Lactating", "दूध दे रहे")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.lactating}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.infoSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("ACTIVE")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "ACTIVE" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "ACTIVE" ? DairyColors.primarySoft : DairyColors.infoSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Active", "सक्रिय")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.active}</Text>
-              </View>
+              </Pressable>
             </View>
 
             <View
@@ -1212,6 +1263,9 @@ export default function AnimalsScreen() {
 
             <Text style={{ marginTop: 14, marginBottom: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
               {x("Herd Records", "झुंड रिकॉर्ड")}
+            </Text>
+            <Text style={{ marginTop: -6, marginBottom: 10, color: DairyColors.textSecondary }}>
+              {x(`Showing: ${listFilterLabel(listFilter)}`, `दिखा रहे हैं: ${listFilterLabel(listFilter)}`)}
             </Text>
           </>
         }

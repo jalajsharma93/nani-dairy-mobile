@@ -1048,12 +1048,47 @@ export default function TreatmentsScreen() {
               `Rx विवरण ${complianceSummary.missingPrescriptionMetadata} | Withdrawal नहीं ${complianceSummary.missingWithdrawalDate} | Withdrawal कम ${complianceSummary.withdrawalBelowMinimum}`
             )}
           </Text>
-          <Text style={{ marginTop: 2, color: DairyColors.textSecondary }}>
-            {x(
-              `Follow-up today ${complianceSummary.followUpDueToday} | Soon ${complianceSummary.followUpDueSoon} | Overdue ${complianceSummary.followUpOverdue}`,
-              `फॉलो-अप आज ${complianceSummary.followUpDueToday} | जल्द ${complianceSummary.followUpDueSoon} | बाकी ${complianceSummary.followUpOverdue}`
-            )}
-          </Text>
+          <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {[
+              {
+                filter: "DUE_TODAY" as DueFilter,
+                label: x("Follow-up Today", "आज फॉलो-अप"),
+                value: complianceSummary.followUpDueToday,
+                background: DairyColors.warningSoft,
+              },
+              {
+                filter: "DUE_SOON" as DueFilter,
+                label: x("Follow-up Soon", "जल्द फॉलो-अप"),
+                value: complianceSummary.followUpDueSoon,
+                background: DairyColors.infoSoft,
+              },
+              {
+                filter: "OVERDUE" as DueFilter,
+                label: x("Follow-up Overdue", "बाकी फॉलो-अप"),
+                value: complianceSummary.followUpOverdue,
+                background: DairyColors.dangerSoft,
+              },
+            ].map((card) => (
+              <Pressable
+                key={card.filter}
+                onPress={() => setDueFilter(card.filter)}
+                style={{
+                  flex: 1,
+                  minWidth: 130,
+                  borderWidth: 1,
+                  borderColor: dueFilter === card.filter ? DairyColors.primary : "transparent",
+                  borderRadius: 10,
+                  backgroundColor: dueFilter === card.filter ? DairyColors.primarySoft : card.background,
+                  padding: 9,
+                }}
+              >
+                <Text style={{ color: DairyColors.textSecondary }}>{card.label}</Text>
+                <Text style={{ marginTop: 3, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
+                  {card.value}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       ) : null}
 
@@ -1516,6 +1551,9 @@ export default function TreatmentsScreen() {
       >
         <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
           {x(`Treatment Records (${selectedAnimal?.tag ?? "No animal"})`, `ट्रीटमेंट रिकॉर्ड (${selectedAnimal?.tag ?? "जानवर नहीं"})`)}
+        </Text>
+        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+          {x(`Showing follow-ups: ${dueFilterLabel(dueFilter)}`, `फॉलो-अप दिखा रहे हैं: ${dueFilterLabel(dueFilter)}`)}
         </Text>
 
         <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>

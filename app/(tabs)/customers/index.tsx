@@ -25,6 +25,7 @@ const SHIFT_OPTIONS: Shift[] = ["AM", "PM"];
 const PRODUCT_OPTIONS: ProductType[] = ["MILK", "CURD", "BUTTERMILK", "PANEER", "GHEE"];
 const DAY_OPTIONS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] as const;
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+type CustomerListFilter = "ALL" | "ACTIVE" | "SUBSCRIPTION" | "OUTSTANDING";
 
 const DAY_ALIAS_TO_SHORT: Record<string, (typeof DAY_OPTIONS)[number]> = {
   MON: "MON",
@@ -89,6 +90,7 @@ export default function CustomersScreen() {
   const canManageCustomers = permissions.canManageCustomers;
 
   const [rows, setRows] = useState<CustomerRecordResponse[]>([]);
+  const [listFilter, setListFilter] = useState<CustomerListFilter>("ALL");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -563,6 +565,26 @@ export default function CustomersScreen() {
     return { total, active, subscriptions, outstanding };
   }, [rows]);
 
+  const filteredRows = useMemo(() => {
+    if (listFilter === "ACTIVE") {
+      return rows.filter((row) => row.isActive);
+    }
+    if (listFilter === "SUBSCRIPTION") {
+      return rows.filter((row) => row.subscriptionActive);
+    }
+    if (listFilter === "OUTSTANDING") {
+      return rows.filter((row) => (row.runningBalance ?? 0) > 0);
+    }
+    return rows;
+  }, [listFilter, rows]);
+
+  const listFilterLabel = (filter: CustomerListFilter) => {
+    if (filter === "ACTIVE") return x("Active", "सक्रिय");
+    if (filter === "SUBSCRIPTION") return x("Subscriptions", "सब्सक्रिप्शन");
+    if (filter === "OUTSTANDING") return x("Outstanding", "बकाया");
+    return x("Total", "कुल");
+  };
+
   const plannerCustomer = useMemo(
     () => rows.find((row) => row.customerId === plannerCustomerId) ?? null,
     [plannerCustomerId, rows]
@@ -640,7 +662,7 @@ export default function CustomersScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
-        data={rows}
+        data={filteredRows}
         keyExtractor={(item) => item.customerId}
         contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -692,24 +714,68 @@ export default function CustomersScreen() {
             ) : null}
 
             <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.accentSoft, borderRadius: 12, padding: 10 }}>
+              <Pressable
+                onPress={() => setListFilter("ALL")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "ALL" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "ALL" ? DairyColors.primarySoft : DairyColors.accentSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Total", "कुल")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.total}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.successSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("ACTIVE")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "ACTIVE" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "ACTIVE" ? DairyColors.primarySoft : DairyColors.successSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Active", "सक्रिय")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.active}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.infoSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("SUBSCRIPTION")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "SUBSCRIPTION" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "SUBSCRIPTION" ? DairyColors.primarySoft : DairyColors.infoSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Subscriptions", "सब्सक्रिप्शन")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.subscriptions}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 120, backgroundColor: DairyColors.warningSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("OUTSTANDING")}
+                style={{
+                  flex: 1,
+                  minWidth: 120,
+                  borderWidth: 1,
+                  borderColor: listFilter === "OUTSTANDING" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "OUTSTANDING" ? DairyColors.primarySoft : DairyColors.warningSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Outstanding", "कुल बकाया")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
                   {`Rs ${summary.outstanding.toFixed(2)}`}
                 </Text>
-              </View>
+              </Pressable>
             </View>
 
             <View
@@ -1334,6 +1400,9 @@ export default function CustomersScreen() {
 
             <Text style={{ marginTop: 14, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 16 }}>
               {x("Customer List", "ग्राहक सूची")}
+            </Text>
+            <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+              {x(`Showing: ${listFilterLabel(listFilter)}`, `दिखा रहे हैं: ${listFilterLabel(listFilter)}`)}
             </Text>
           </>
         }

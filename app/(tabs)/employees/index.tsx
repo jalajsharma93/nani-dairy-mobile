@@ -54,6 +54,7 @@ type AttendanceDraft = {
   notes: string;
   dirty: boolean;
 };
+type EmployeeListFilter = "ALL" | "FULL_TIME" | "ACTIVE";
 
 function employeeTypeTone(type: EmployeeType) {
   if (type === "FULL_TIME") {
@@ -144,6 +145,7 @@ export default function EmployeesScreen() {
   const canManagePayrollAdjustments = permissions.canManagePayrollAdjustments;
 
   const [employees, setEmployees] = useState<EmployeeResponse[]>([]);
+  const [listFilter, setListFilter] = useState<EmployeeListFilter>("ALL");
   const [loading, setLoading] = useState(false);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [attendanceSavingAll, setAttendanceSavingAll] = useState(false);
@@ -556,6 +558,22 @@ export default function EmployeesScreen() {
     const active = employees.filter((e) => e.isActive).length;
     return { total, fullTime, active };
   }, [employees]);
+
+  const filteredEmployees = useMemo(() => {
+    if (listFilter === "FULL_TIME") {
+      return employees.filter((employee) => employee.type === "FULL_TIME");
+    }
+    if (listFilter === "ACTIVE") {
+      return employees.filter((employee) => employee.isActive);
+    }
+    return employees;
+  }, [employees, listFilter]);
+
+  const listFilterLabel = (filter: EmployeeListFilter) => {
+    if (filter === "FULL_TIME") return x("Full-time", "फुल-टाइम");
+    if (filter === "ACTIVE") return x("Active", "सक्रिय");
+    return x("Total", "कुल");
+  };
 
   const resetSalaryForm = () => {
     setSalaryEmployee(null);
@@ -1054,7 +1072,7 @@ export default function EmployeesScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: DairyColors.background }}>
       <FlatList
-        data={employees}
+        data={filteredEmployees}
         keyExtractor={(e) => e.employeeId}
         contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
@@ -1106,18 +1124,51 @@ export default function EmployeesScreen() {
             ) : null}
 
             <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.accentSoft, borderRadius: 12, padding: 10 }}>
+              <Pressable
+                onPress={() => setListFilter("ALL")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "ALL" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "ALL" ? DairyColors.primarySoft : DairyColors.accentSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Total", "कुल")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.total}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.infoSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("FULL_TIME")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "FULL_TIME" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "FULL_TIME" ? DairyColors.primarySoft : DairyColors.infoSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Full-time", "फुल-टाइम")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.fullTime}</Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 100, backgroundColor: DairyColors.successSoft, borderRadius: 12, padding: 10 }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setListFilter("ACTIVE")}
+                style={{
+                  flex: 1,
+                  minWidth: 100,
+                  borderWidth: 1,
+                  borderColor: listFilter === "ACTIVE" ? DairyColors.primary : "transparent",
+                  backgroundColor: listFilter === "ACTIVE" ? DairyColors.primarySoft : DairyColors.successSoft,
+                  borderRadius: 12,
+                  padding: 10,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Active", "सक्रिय")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>{summary.active}</Text>
-              </View>
+              </Pressable>
             </View>
 
             {canManageAttendance ? (
@@ -2351,6 +2402,9 @@ export default function EmployeesScreen() {
 
             <Text style={{ marginTop: 14, marginBottom: 10, color: DairyColors.textSecondary, fontWeight: "700" }}>
               {x("Employee Directory", "कर्मचारी सूची")}
+            </Text>
+            <Text style={{ marginTop: -6, marginBottom: 10, color: DairyColors.textSecondary }}>
+              {x(`Showing: ${listFilterLabel(listFilter)}`, `दिखा रहे हैं: ${listFilterLabel(listFilter)}`)}
             </Text>
           </>
         }

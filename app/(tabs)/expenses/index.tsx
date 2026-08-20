@@ -35,6 +35,7 @@ const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 const PAYMENT_MODES: PaymentMode[] = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "CREDIT"];
 
 const money = (value: number) => `Rs ${value.toFixed(2)}`;
+type ExpenseListFilter = "ALL" | "SALARY" | "OTHER";
 
 export default function ExpensesScreen() {
   const { user } = useAuth();
@@ -44,6 +45,7 @@ export default function ExpensesScreen() {
 
   const [date, setDate] = useState(todayLocalISO());
   const [expenses, setExpenses] = useState<ExpenseResponse[]>([]);
+  const [listFilter, setListFilter] = useState<ExpenseListFilter>("ALL");
   const [summary, setSummary] = useState<ExpensesSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -74,6 +76,22 @@ export default function ExpensesScreen() {
   const [counterparty, setCounterparty] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
   const [notes, setNotes] = useState("");
+
+  const filteredExpenses = useMemo(() => {
+    if (listFilter === "SALARY") {
+      return expenses.filter((item) => item.category === "SALARY");
+    }
+    if (listFilter === "OTHER") {
+      return expenses.filter((item) => item.category !== "SALARY");
+    }
+    return expenses;
+  }, [expenses, listFilter]);
+
+  const listFilterLabel = (filter: ExpenseListFilter) => {
+    if (filter === "SALARY") return x("Salary Expense", "सैलरी खर्च");
+    if (filter === "OTHER") return x("Other Expense", "अन्य खर्च");
+    return x("Total Expense", "कुल खर्च");
+  };
 
   const resetForm = () => {
     setEditingExpenseId(null);
@@ -289,24 +307,57 @@ export default function ExpensesScreen() {
 
       {canManageExpenses ? (
         <View style={{ marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.accentSoft }}>
+          <Pressable
+            onPress={() => setListFilter("ALL")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: listFilter === "ALL" ? DairyColors.primary : "transparent",
+              borderRadius: 12,
+              padding: 10,
+              backgroundColor: listFilter === "ALL" ? DairyColors.primarySoft : DairyColors.accentSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Total Expense", "कुल खर्च")}</Text>
             <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
               {money(summary?.totalAmount ?? dailyTotal)}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.warningSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => setListFilter("SALARY")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: listFilter === "SALARY" ? DairyColors.primary : "transparent",
+              borderRadius: 12,
+              padding: 10,
+              backgroundColor: listFilter === "SALARY" ? DairyColors.primarySoft : DairyColors.warningSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Salary Expense", "सैलरी खर्च")}</Text>
             <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
               {money(summary?.salaryAmount ?? 0)}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.infoSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => setListFilter("OTHER")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: listFilter === "OTHER" ? DairyColors.primary : "transparent",
+              borderRadius: 12,
+              padding: 10,
+              backgroundColor: listFilter === "OTHER" ? DairyColors.primarySoft : DairyColors.infoSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Other Expense", "अन्य खर्च")}</Text>
             <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontWeight: "800", fontSize: 18 }}>
               {money(summary?.otherAmount ?? 0)}
             </Text>
-          </View>
+          </Pressable>
         </View>
       ) : null}
 
@@ -495,15 +546,18 @@ export default function ExpensesScreen() {
         <Text style={{ fontWeight: "800", color: DairyColors.textPrimary }}>
           {x(`Expenses (${date})`, `खर्चे (${date})`)}
         </Text>
+        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+          {x(`Showing: ${listFilterLabel(listFilter)}`, `दिखा रहे हैं: ${listFilterLabel(listFilter)}`)}
+        </Text>
 
-        {expenses.length === 0 ? (
+        {filteredExpenses.length === 0 ? (
           <Text style={{ marginTop: 8, color: DairyColors.textSecondary }}>
             {loading
               ? x("Loading expenses...", "खर्चे लोड हो रहे हैं...")
               : x("No expenses found for selected date.", "चुनी तारीख पर कोई खर्च नहीं मिला।")}
           </Text>
         ) : (
-          expenses.map((item) => (
+          filteredExpenses.map((item) => (
             <View
               key={item.expenseId}
               style={{
