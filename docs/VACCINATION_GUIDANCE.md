@@ -23,6 +23,14 @@ Primary references checked:
 
 The app should track vaccination by disease coverage, not only by brand name.
 
+The Health screen now supports herd-style entry:
+
+- Each vaccine option shows the next recommended date calculated from the selected dose date.
+- `Next Due` auto-populates when the selected vaccine has a repeat cycle.
+- Users can still edit `Next Due` manually for vet advice, product-label instructions, or local government campaigns.
+- `Use Rec.` restores the calculated recommendation after manual edits.
+- When more than one active animal exists, `Next Cow` moves the form to the next animal and `Save & Next Cow` saves the current vaccination then opens the next animal.
+
 When a combined product is used:
 
 - Select the matching combo option if available.

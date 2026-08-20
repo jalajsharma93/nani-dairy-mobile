@@ -554,6 +554,21 @@ export default function HealthScreen() {
     () => animals.find((a) => a.animalId === selectedAnimalId) ?? null,
     [animals, selectedAnimalId]
   );
+  const selectedAnimalIndex = useMemo(
+    () => animals.findIndex((a) => a.animalId === selectedAnimalId),
+    [animals, selectedAnimalId]
+  );
+  const nextAnimal = useMemo(() => {
+    if (animals.length < 2) {
+      return null;
+    }
+    const currentIndex = selectedAnimalIndex >= 0 ? selectedAnimalIndex : -1;
+    return animals[(currentIndex + 1) % animals.length] ?? null;
+  }, [animals, selectedAnimalIndex]);
+  const recommendedNextDueDate = useMemo(
+    () => autoNextDueDate(selectedVaccineKey, vDoseDate),
+    [selectedVaccineKey, vDoseDate]
+  );
   const vaccineSelectionEditable = selectedVaccineKey === "OTHER" || selectedVaccineKey === "MULTIVALENT";
 
   const vetFocusSummary = useMemo(() => {
@@ -689,7 +704,14 @@ export default function HealthScreen() {
     }
   };
 
-  const saveVaccination = async () => {
+  const goToNextAnimal = async () => {
+    if (!nextAnimal) {
+      return;
+    }
+    await onSelectAnimal(nextAnimal.animalId);
+  };
+
+  const saveVaccination = async (moveToNextAnimal = false) => {
     if (!selectedAnimalId) {
       Alert.alert(x("Select animal", "जानवर चुनें"), x("Please select an animal first.", "पहले जानवर चुनें।"));
       return;
@@ -793,16 +815,32 @@ export default function HealthScreen() {
 
     try {
       setSavingVaccination(true);
+      const targetNextAnimal = moveToNextAnimal && !editingVaccinationId ? nextAnimal : null;
       if (editingVaccinationId) {
         await HealthApi.updateVaccination(selectedAnimalId, editingVaccinationId, payload);
       } else {
         await HealthApi.createVaccination(selectedAnimalId, payload);
       }
-      await Promise.all([loadRecords(selectedAnimalId), HealthApi.summary(date, 7).then(setSummary)]);
-      resetVaccinationForm();
+      await HealthApi.summary(date, 7).then(setSummary);
+      if (targetNextAnimal) {
+        setSelectedAnimalId(targetNextAnimal.animalId);
+        resetVaccinationForm();
+        resetDewormingForm();
+        await loadRecords(targetNextAnimal.animalId);
+      } else {
+        await loadRecords(selectedAnimalId);
+        resetVaccinationForm();
+      }
       Alert.alert(
         x("Saved", "सेव हो गया"),
-        editingVaccinationId ? x("Vaccination updated.", "टीका रिकॉर्ड अपडेट हुआ।") : x("Vaccination added.", "टीका रिकॉर्ड जोड़ दिया गया।")
+        targetNextAnimal
+          ? x(
+              `Vaccination added. Next cow selected: ${targetNextAnimal.tag}.`,
+              `टीका रिकॉर्ड जोड़ दिया गया। अगला पशु चुना गया: ${targetNextAnimal.tag}।`
+            )
+          : editingVaccinationId
+            ? x("Vaccination updated.", "टीका रिकॉर्ड अपडेट हुआ।")
+            : x("Vaccination added.", "टीका रिकॉर्ड जोड़ दिया गया।")
       );
     } catch (e: any) {
       console.error(e);
@@ -1526,7 +1564,37 @@ export default function HealthScreen() {
       ) : null}
 
       <View style={sectionCard}>
-        <Text style={{ fontWeight: "800", color: DairyColors.textPrimary }}>{x("Select Animal", "जानवर चुनें")}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: "800", color: DairyColors.textPrimary }}>{x("Select Animal", "जानवर चुनें")}</Text>
+            {selectedAnimalIndex >= 0 ? (
+              <Text style={{ marginTop: 2, color: DairyColors.textSecondary, fontSize: 12 }}>
+                {x(
+                  `Cow ${selectedAnimalIndex + 1} of ${animals.length}`,
+                  `पशु ${selectedAnimalIndex + 1} / ${animals.length}`
+                )}
+              </Text>
+            ) : null}
+          </View>
+          {nextAnimal ? (
+            <Pressable
+              disabled={loading}
+              onPress={() => {
+                void goToNextAnimal();
+              }}
+              style={{
+                borderWidth: 1,
+                borderColor: DairyColors.primary,
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                backgroundColor: DairyColors.primarySoft,
+              }}
+            >
+              <Text style={{ color: DairyColors.primary, fontWeight: "800" }}>{x("Next Cow", "अगला पशु")}</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {animals.length === 0 ? (
             <Text style={{ color: DairyColors.textSecondary }}>{x("No active animals found.", "कोई सक्रिय जानवर नहीं मिला।")}</Text>
@@ -1585,16 +1653,23 @@ export default function HealthScreen() {
                   key={option.key}
                   onPress={() => onSelectVaccine(option.key)}
                   style={{
+                    minWidth: 110,
                     borderWidth: 1,
                     borderColor: selectedVaccineKey === option.key ? DairyColors.primary : DairyColors.border,
                     backgroundColor: selectedVaccineKey === option.key ? DairyColors.primarySoft : DairyColors.surface,
-                    borderRadius: 999,
+                    borderRadius: 10,
                     paddingHorizontal: 11,
                     paddingVertical: 8,
                   }}
                 >
                   <Text style={{ color: DairyColors.textPrimary, fontWeight: "700" }}>
                     {x(option.labelEn, option.labelHi)}
+                  </Text>
+                  <Text style={{ marginTop: 2, color: DairyColors.textSecondary, fontSize: 11, fontWeight: "700" }}>
+                    {x(
+                      `Next: ${autoNextDueDate(option.key, vDoseDate) ?? "manual"}`,
+                      `अगला: ${autoNextDueDate(option.key, vDoseDate) ?? "manual"}`
+                    )}
                   </Text>
                 </Pressable>
               ))}
@@ -1753,13 +1828,24 @@ export default function HealthScreen() {
                   backgroundColor: DairyColors.primarySoft,
                 }}
               >
-                <Text style={{ color: DairyColors.primary, fontWeight: "800" }}>{x("Auto", "ऑटो")}</Text>
+                <Text style={{ color: DairyColors.primary, fontWeight: "800" }}>{x("Use Rec.", "सुझाव")}</Text>
               </Pressable>
             </View>
             <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
-              {nextDueAuto
-                ? x("Next shot is auto-set from selected vaccine schedule.", "अगला डोज चुने हुए टीका शेड्यूल से ऑटो सेट है।")
-                : x("Next shot can be edited manually.", "अगली तारीख हाथ से बदली जा सकती है।")}
+              {recommendedNextDueDate
+                ? nextDueAuto
+                  ? x(
+                      `Recommended next shot ${recommendedNextDueDate}; auto-filled from selected vaccine.`,
+                      `सुझाई गई अगली तारीख ${recommendedNextDueDate}; चुने हुए टीके से ऑटो भरी गई।`
+                    )
+                  : x(
+                      `Recommended next shot ${recommendedNextDueDate}; current field is manually edited.`,
+                      `सुझाई गई अगली तारीख ${recommendedNextDueDate}; अभी तारीख हाथ से बदली गई है।`
+                    )
+                : x(
+                    "This vaccine needs a manual next date based on vial/vet advice.",
+                    "इस टीके की अगली तारीख vial/vet सलाह के अनुसार हाथ से भरें।"
+                  )}
             </Text>
 
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
@@ -1836,7 +1922,9 @@ export default function HealthScreen() {
             <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
               <Pressable
                 disabled={savingVaccination || !canManageHealth || !selectedAnimal}
-                onPress={saveVaccination}
+                onPress={() => {
+                  void saveVaccination();
+                }}
                 style={{
                   flex: 1,
                   borderRadius: 10,
@@ -1854,8 +1942,28 @@ export default function HealthScreen() {
                     : editingVaccinationId
                       ? x("Update Vaccination", "टीका अपडेट करें")
                       : x("Add Vaccination", "टीका जोड़ें")}
-                </Text>
+                  </Text>
               </Pressable>
+              {!editingVaccinationId && nextAnimal ? (
+                <Pressable
+                  disabled={savingVaccination || !canManageHealth || !selectedAnimal}
+                  onPress={() => {
+                    void saveVaccination(true);
+                  }}
+                  style={{
+                    flex: 1,
+                    borderRadius: 10,
+                    backgroundColor:
+                      savingVaccination || !canManageHealth || !selectedAnimal
+                        ? DairyColors.textSecondary
+                        : DairyColors.success,
+                    padding: 12,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: "white", fontWeight: "800" }}>{x("Save & Next Cow", "सेव + अगला")}</Text>
+                </Pressable>
+              ) : null}
               {editingVaccinationId ? (
                 <Pressable
                   onPress={resetVaccinationForm}
