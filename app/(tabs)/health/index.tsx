@@ -30,12 +30,18 @@ type DueFilter = "ALL" | "DUE_TODAY" | "DUE_SOON" | "OVERDUE";
 type DueStatus = "NO_DUE" | "DUE_TODAY" | "DUE_SOON" | "OVERDUE";
 type VaccineKey =
   | "FMD"
+  | "FMD_HS"
+  | "FMD_HS_BQ"
   | "BRUCELLOSIS"
   | "HS"
+  | "HS_BQ"
   | "BQ"
   | "ANTHRAX"
+  | "IBR"
+  | "RABIES"
   | "LSD"
   | "THEILERIOSIS"
+  | "MULTIVALENT"
   | "OTHER";
 
 type TimelineEvent = {
@@ -47,9 +53,8 @@ type TimelineEvent = {
 };
 
 const DUE_FILTERS: DueFilter[] = ["ALL", "DUE_TODAY", "DUE_SOON", "OVERDUE"];
-// Dropdown options aligned with DAHD references:
-// - NADCP/CADCP guidance (FMD, Brucellosis)
-// - DAHD semen-station minimum standards vaccination section (FMD, HS, BQ, Theileriosis, LSD, Anthrax)
+// Dropdown options aligned with public DAHD/NADCP, MP Animal Husbandry, and NDDB disease schedules.
+// Keep the workflow disease-first: combo products are recorded by covered diseases, not only brand names.
 const VACCINE_OPTIONS: {
   key: VaccineKey;
   vaccineName: string;
@@ -60,6 +65,8 @@ const VACCINE_OPTIONS: {
   nextShotDays: number | null;
   scheduleHintEn: string;
   scheduleHintHi: string;
+  productAdviceEn: string;
+  productAdviceHi: string;
 }[] = [
   {
     key: "FMD",
@@ -71,6 +78,34 @@ const VACCINE_OPTIONS: {
     nextShotDays: 180,
     scheduleHintEn: "Repeat every 6 months.",
     scheduleHintHi: "हर 6 महीने में अगला डोज दें।",
+    productAdviceEn: "NADCP disease schedule: FMD for cattle/buffalo is tracked every six months.",
+    productAdviceHi: "NADCP disease schedule: गाय/भैंस में FMD हर छह महीने ट्रैक करें।",
+  },
+  {
+    key: "FMD_HS",
+    vaccineName: "FMD + HS",
+    diseaseTarget: "Foot and Mouth Disease + Haemorrhagic Septicaemia",
+    diseaseTargetHi: "खुरपका-मुंहपका + गलघोटू",
+    labelEn: "FMD+HS",
+    labelHi: "FMD+HS",
+    nextShotDays: 180,
+    scheduleHintEn: "Combined product: track next due at 6 months because FMD is the shortest repeat cycle.",
+    scheduleHintHi: "कंबाइंड टीका: FMD का चक्र सबसे छोटा है, इसलिए अगली तारीख 6 महीने रखें।",
+    productAdviceEn: "Use only when the vial label covers both FMD and HS. HS still needs annual/endemic-area review.",
+    productAdviceHi: "केवल तब चुनें जब vial label FMD और HS दोनों कवर करे। HS की सालाना/क्षेत्रीय समीक्षा रखें।",
+  },
+  {
+    key: "FMD_HS_BQ",
+    vaccineName: "FMD + HS + BQ",
+    diseaseTarget: "Foot and Mouth Disease + Haemorrhagic Septicaemia + Black Quarter",
+    diseaseTargetHi: "खुरपका-मुंहपका + गलघोटू + ब्लैक क्वार्टर",
+    labelEn: "FMD+HS+BQ",
+    labelHi: "FMD+HS+BQ",
+    nextShotDays: 180,
+    scheduleHintEn: "Combined bovine product: track next due at 6 months for the FMD component.",
+    scheduleHintHi: "कंबाइंड bovine टीका: FMD component के कारण अगली तारीख 6 महीने रखें।",
+    productAdviceEn: "Common cattle combo pattern. Record batch/lot and confirm the label includes all three diseases.",
+    productAdviceHi: "यह cattle combo pattern आम है। बैच/लॉट लिखें और label पर तीनों disease confirm करें।",
   },
   {
     key: "BRUCELLOSIS",
@@ -82,6 +117,8 @@ const VACCINE_OPTIONS: {
     nextShotDays: null,
     scheduleHintEn: "Usually single calf dose (female calves) as per program.",
     scheduleHintHi: "आमतौर पर बछिया में एक बार का डोज (कार्यक्रम के अनुसार)।",
+    productAdviceEn: "Government program target is bovine female calves around 4-8 months; do not repeat routinely.",
+    productAdviceHi: "सरकारी कार्यक्रम में लक्ष्य 4-8 महीने की bovine female calves हैं; routine repeat न करें।",
   },
   {
     key: "HS",
@@ -93,6 +130,21 @@ const VACCINE_OPTIONS: {
     nextShotDays: 365,
     scheduleHintEn: "Repeat annually (commonly before monsoon).",
     scheduleHintHi: "हर साल दोहराएं (आमतौर पर मानसून से पहले)।",
+    productAdviceEn: "Use for HS-only product, or log combo as FMD+HS / HS+BQ when the label says so.",
+    productAdviceHi: "HS-only product के लिए चुनें; label combo हो तो FMD+HS / HS+BQ चुनें।",
+  },
+  {
+    key: "HS_BQ",
+    vaccineName: "HS + BQ",
+    diseaseTarget: "Haemorrhagic Septicaemia + Black Quarter",
+    diseaseTargetHi: "गलघोटू + ब्लैक क्वार्टर",
+    labelEn: "HS+BQ",
+    labelHi: "HS+BQ",
+    nextShotDays: 365,
+    scheduleHintEn: "Combined bacterial vaccine: repeat annually where these diseases are endemic/advised.",
+    scheduleHintHi: "कंबाइंड bacterial टीका: endemic/advised क्षेत्र में सालाना दोहराएं।",
+    productAdviceEn: "Choose this only when the vial label covers both HS and BQ.",
+    productAdviceHi: "केवल तब चुनें जब vial label HS और BQ दोनों कवर करे।",
   },
   {
     key: "BQ",
@@ -104,6 +156,8 @@ const VACCINE_OPTIONS: {
     nextShotDays: 365,
     scheduleHintEn: "Repeat annually in endemic areas.",
     scheduleHintHi: "प्रभावित क्षेत्रों में हर साल दोहराएं।",
+    productAdviceEn: "Use for BQ-only product; if bundled with HS/FMD, choose the matching combo option.",
+    productAdviceHi: "BQ-only product के लिए चुनें; HS/FMD के साथ bundled हो तो combo option चुनें।",
   },
   {
     key: "ANTHRAX",
@@ -115,6 +169,34 @@ const VACCINE_OPTIONS: {
     nextShotDays: 365,
     scheduleHintEn: "Repeat annually in endemic areas.",
     scheduleHintHi: "प्रभावित क्षेत्रों में हर साल दोहराएं।",
+    productAdviceEn: "Use only in endemic/outbreak-risk areas as advised by the local veterinary team.",
+    productAdviceHi: "स्थानीय veterinary टीम की सलाह पर endemic/outbreak-risk क्षेत्र में उपयोग करें।",
+  },
+  {
+    key: "IBR",
+    vaccineName: "IBR",
+    diseaseTarget: "Infectious Bovine Rhinotracheitis",
+    diseaseTargetHi: "इन्फेक्शियस बोवाइन राइनोट्रेकाइटिस",
+    labelEn: "IBR",
+    labelHi: "IBR",
+    nextShotDays: 180,
+    scheduleHintEn: "NDDB lists booster after 1 month, then six monthly; use only with vet confirmation.",
+    scheduleHintHi: "NDDB के अनुसार 1 महीने बाद booster, फिर 6 महीने; vet confirmation पर ही उपयोग करें।",
+    productAdviceEn: "Not a routine farm default in many areas. Confirm availability and need before recording.",
+    productAdviceHi: "कई क्षेत्रों में routine default नहीं है। रिकॉर्ड करने से पहले जरूरत और availability confirm करें।",
+  },
+  {
+    key: "RABIES",
+    vaccineName: "Rabies",
+    diseaseTarget: "Rabies post-bite therapy",
+    diseaseTargetHi: "रेबीज post-bite therapy",
+    labelEn: "Rabies",
+    labelHi: "रेबीज",
+    nextShotDays: null,
+    scheduleHintEn: "Post-bite only: follow vet schedule (day 0, 4, 7, 14, 28, 90 optional).",
+    scheduleHintHi: "केवल bite के बाद: vet schedule मानें (day 0, 4, 7, 14, 28, 90 optional)।",
+    productAdviceEn: "Do not use as routine dairy herd vaccination unless specifically advised.",
+    productAdviceHi: "विशेष सलाह के बिना dairy herd routine vaccine की तरह उपयोग न करें।",
   },
   {
     key: "LSD",
@@ -126,6 +208,8 @@ const VACCINE_OPTIONS: {
     nextShotDays: 365,
     scheduleHintEn: "Annual campaign cycle; follow latest state advisory.",
     scheduleHintHi: "वार्षिक अभियान चक्र; राज्य की नवीन सलाह का पालन करें।",
+    productAdviceEn: "Follow the current local/state campaign advisory for LSD timing and product.",
+    productAdviceHi: "LSD timing और product के लिए current local/state campaign advisory मानें।",
   },
   {
     key: "THEILERIOSIS",
@@ -137,6 +221,21 @@ const VACCINE_OPTIONS: {
     nextShotDays: null,
     scheduleHintEn: "Often one-time in eligible calves; follow vet guidance.",
     scheduleHintHi: "अक्सर योग्य बछड़ों में एक बार; पशु चिकित्सक सलाह लें।",
+    productAdviceEn: "NDDB notes this mainly for crossbred/exotic cattle; not every indigenous animal needs it.",
+    productAdviceHi: "NDDB के अनुसार यह मुख्यतः crossbred/exotic cattle के लिए है; हर desi animal को जरूरी नहीं।",
+  },
+  {
+    key: "MULTIVALENT",
+    vaccineName: "Multivalent / 6-in-1",
+    diseaseTarget: "Multiple diseases as per vial label",
+    diseaseTargetHi: "Vial label के अनुसार multiple diseases",
+    labelEn: "6-in-1 / Multi",
+    labelHi: "6-in-1 / Multi",
+    nextShotDays: null,
+    scheduleHintEn: "Brand-dependent. Enter covered diseases from label and set next due with vet advice.",
+    scheduleHintHi: "Brand पर निर्भर। Label से covered diseases लिखें और vet advice से अगली तारीख रखें।",
+    productAdviceEn: "Important: canine 6-in-1 products are not cattle vaccines. For cattle, verify species, diseases, dose, route, and batch.",
+    productAdviceHi: "जरूरी: canine 6-in-1 cattle vaccine नहीं है। Cattle के लिए species, diseases, dose, route और batch verify करें।",
   },
   {
     key: "OTHER",
@@ -148,6 +247,8 @@ const VACCINE_OPTIONS: {
     nextShotDays: null,
     scheduleHintEn: "Custom vaccine; enter next due manually.",
     scheduleHintHi: "कस्टम वैक्सीन; अगली तारीख हाथ से भरें।",
+    productAdviceEn: "Use when a government/vet advisory or product label does not match the preset list.",
+    productAdviceHi: "जब government/vet advisory या product label preset list से match न करे तब उपयोग करें।",
   },
 ];
 
@@ -245,6 +346,23 @@ function vaccineKeyFromName(vaccineName: string): VaccineKey {
   const normalized = vaccineName.trim().toLowerCase();
   if (!normalized) {
     return "FMD";
+  }
+  if (normalized.includes("fmd") && normalized.includes("hs") && normalized.includes("bq")) {
+    return "FMD_HS_BQ";
+  }
+  if (normalized.includes("fmd") && normalized.includes("hs")) {
+    return "FMD_HS";
+  }
+  if (normalized.includes("hs") && normalized.includes("bq")) {
+    return "HS_BQ";
+  }
+  if (
+    normalized.includes("multi") ||
+    normalized.includes("6-in-1") ||
+    normalized.includes("six in one") ||
+    normalized.includes("6 in 1")
+  ) {
+    return "MULTIVALENT";
   }
   const found = VACCINE_OPTIONS.find(
     (option) => option.key !== "OTHER" && option.vaccineName.trim().toLowerCase() === normalized
@@ -436,6 +554,7 @@ export default function HealthScreen() {
     () => animals.find((a) => a.animalId === selectedAnimalId) ?? null,
     [animals, selectedAnimalId]
   );
+  const vaccineSelectionEditable = selectedVaccineKey === "OTHER" || selectedVaccineKey === "MULTIVALENT";
 
   const vetFocusSummary = useMemo(() => {
     const vetTypes = new Set([
@@ -1492,8 +1611,40 @@ export default function HealthScreen() {
                 vaccineByKey(selectedVaccineKey).scheduleHintHi
               )}
             </Text>
+            <View
+              style={{
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: selectedVaccineKey === "MULTIVALENT" ? DairyColors.warning : DairyColors.border,
+                borderRadius: 10,
+                backgroundColor:
+                  selectedVaccineKey === "MULTIVALENT" ? DairyColors.warningSoft : DairyColors.infoSoft,
+                padding: 10,
+              }}
+            >
+              <Text
+                style={{
+                  color: selectedVaccineKey === "MULTIVALENT" ? DairyColors.warning : DairyColors.info,
+                  fontWeight: "800",
+                }}
+              >
+                {x("Vaccine selection advice", "टीका चयन सलाह")}
+              </Text>
+              <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                {x(
+                  vaccineByKey(selectedVaccineKey).productAdviceEn,
+                  vaccineByKey(selectedVaccineKey).productAdviceHi
+                )}
+              </Text>
+              <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
+                {x(
+                  "For combo or 6-in-1 products, copy the vial label into Notes and keep Batch/Lot mandatory in farm practice.",
+                  "Combo या 6-in-1 product में vial label Notes में लिखें और farm practice में Batch/Lot जरूर भरें।"
+                )}
+              </Text>
+            </View>
 
-            {selectedVaccineKey === "OTHER" ? (
+            {vaccineSelectionEditable ? (
               <TextInput
                 value={vaccineName}
                 onChangeText={setVaccineName}
@@ -1535,7 +1686,7 @@ export default function HealthScreen() {
               onChangeText={setDiseaseTarget}
               placeholder={x("Disease target", "बीमारी लक्ष्य")}
               placeholderTextColor="#99A99A"
-              editable={canManageHealth && selectedVaccineKey === "OTHER"}
+              editable={canManageHealth && vaccineSelectionEditable}
               style={{
                 marginTop: 6,
                 borderWidth: 1,
@@ -1544,7 +1695,7 @@ export default function HealthScreen() {
                 padding: 10,
                 color: DairyColors.textPrimary,
                 backgroundColor:
-                  canManageHealth && selectedVaccineKey === "OTHER"
+                  canManageHealth && vaccineSelectionEditable
                     ? DairyColors.surfaceMuted
                     : DairyColors.surface,
               }}

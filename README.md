@@ -10,6 +10,7 @@ The app covers milk collection, QC, animals, breeding, health, treatments, feed,
 - `docs/FEATURE_STATUS.md`: Current module-by-module implementation status.
 - `docs/TASK_BACKLOG.md`: Completed Phase 2 items plus Phase 3/deferred backlog.
 - `docs/DEVELOPER_RUNBOOK.md`: Local setup, verification commands, and production-readiness notes.
+- `docs/VACCINATION_GUIDANCE.md`: Cattle/buffalo vaccination list guidance, including combo and 6-in-1 products.
 
 ## Local Setup
 
