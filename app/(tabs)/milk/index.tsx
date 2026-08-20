@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import { DairyColors } from "@/src/constants/dairy-theme";
@@ -29,6 +30,7 @@ const EMPTY_VALUES: Record<string, string> = {};
 const liters = (value: number) => `${value.toFixed(2)} L`;
 
 export default function MilkEntryScreen() {
+  const router = useRouter();
   const { x, label } = useI18n();
   const [date] = useState<string>(todayLocalISO());
   const [shift, setShift] = useState<Shift>("AM");
@@ -73,6 +75,17 @@ export default function MilkEntryScreen() {
 
   const averagePerEntered = enteredCount > 0 ? total / enteredCount : 0;
   const batchLocked = batch?.qcStatus === "PASS";
+
+  const openQc = (animalId?: string) => {
+    router.push({
+      pathname: "/qc",
+      params: {
+        date,
+        shift,
+        ...(animalId ? { animalId } : {}),
+      },
+    });
+  };
 
   const refreshPendingSync = useCallback(async () => {
     setPendingSync(await getPendingSyncSummary());
@@ -320,7 +333,8 @@ export default function MilkEntryScreen() {
                     {x(`Avg: ${liters(averagePerEntered)}`, `औसत: ${liters(averagePerEntered)}`)}
                   </Text>
                 </View>
-                <View
+                <Pressable
+                  onPress={() => openQc()}
                   style={{
                     borderRadius: 999,
                     backgroundColor:
@@ -335,25 +349,28 @@ export default function MilkEntryScreen() {
                     paddingVertical: 6,
                   }}
                 >
-                  <Text
-                    style={{
-                      color:
-                        batch?.qcStatus === "PASS"
-                          ? DairyColors.success
-                          : batch?.qcStatus === "HOLD"
-                            ? DairyColors.warning
-                            : batch?.qcStatus === "REJECT"
-                              ? DairyColors.danger
-                              : DairyColors.info,
-                      fontWeight: "700",
-                    }}
-                  >
-                    {x(
-                      `QC: ${batch?.qcStatus ?? "NO BATCH"}`,
-                      `QC: ${label("qcStatus", batch?.qcStatus ?? "NO_BATCH")}`
-                    )}
-                  </Text>
-                </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                    <Text
+                      style={{
+                        color:
+                          batch?.qcStatus === "PASS"
+                            ? DairyColors.success
+                            : batch?.qcStatus === "HOLD"
+                              ? DairyColors.warning
+                              : batch?.qcStatus === "REJECT"
+                                ? DairyColors.danger
+                                : DairyColors.info,
+                        fontWeight: "700",
+                      }}
+                    >
+                      {x(
+                        `QC: ${batch?.qcStatus ?? "NO BATCH"}`,
+                        `QC: ${label("qcStatus", batch?.qcStatus ?? "NO_BATCH")}`
+                      )}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={14} color={DairyColors.info} />
+                  </View>
+                </Pressable>
               </View>
             </View>
 
@@ -460,7 +477,24 @@ export default function MilkEntryScreen() {
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>{item.tag}</Text>
-                <Text style={{ color: DairyColors.textSecondary, fontSize: 12 }}>{item.breed}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={{ color: DairyColors.textSecondary, fontSize: 12 }}>{item.breed}</Text>
+                  <Pressable
+                    onPress={() => openQc(item.animalId)}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: DairyColors.info,
+                      borderRadius: 10,
+                      backgroundColor: DairyColors.infoSoft,
+                      paddingHorizontal: 9,
+                      paddingVertical: 5,
+                    }}
+                  >
+                    <Text style={{ color: DairyColors.info, fontWeight: "800", fontSize: 12 }}>
+                      {x("QC", "QC")}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               <TextInput
                 editable={!batchLocked}
@@ -522,6 +556,27 @@ export default function MilkEntryScreen() {
                   : batchLocked
                     ? x("Locked After PASS", "PASS के बाद लॉक")
                     : x(`Save ${shift} Entries`, `${shift === "AM" ? "सुबह" : "शाम"} एंट्री सेव करें`)}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => openQc()}
+              style={{
+                marginTop: 10,
+                padding: 12,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: DairyColors.info,
+                backgroundColor: DairyColors.infoSoft,
+                alignItems: "center",
+                flexDirection: "row",
+                justifyContent: "center",
+                gap: 8,
+              }}
+            >
+              <Ionicons name="flask" size={17} color={DairyColors.info} />
+              <Text style={{ color: DairyColors.info, fontWeight: "800" }}>
+                {x("Open Quality Check", "क्वालिटी चेक खोलें")}
               </Text>
             </Pressable>
 

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
@@ -44,6 +45,20 @@ type CowQcDraft = {
   labUploadUri: string;
   labTestAttachmentUrl: string;
 };
+
+function initialDateFromParam(value?: string | string[]) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : todayLocalISO();
+}
+
+function initialShiftFromParam(value?: string | string[]): Shift {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw === "PM" ? "PM" : "AM";
+}
+
+function paramString(value?: string | string[]) {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
 
 const EMPTY_DRAFT: CowQcDraft = {
   fat: "",
@@ -111,14 +126,15 @@ function guessMimeType(uri: string) {
 }
 
 export default function QualityCheckScreen() {
+  const params = useLocalSearchParams<{ date?: string; shift?: string; animalId?: string; tag?: string }>();
   const { user } = useAuth();
   const { x, label } = useI18n();
   const permissions = resolveRolePermissions(user?.role);
   const isAdmin = permissions.isAdmin;
   const canApproveBatch = permissions.canApproveQc;
 
-  const [date] = useState<string>(todayLocalISO());
-  const [shift, setShift] = useState<Shift>("AM");
+  const [date, setDate] = useState<string>(() => initialDateFromParam(params.date));
+  const [shift, setShift] = useState<Shift>(() => initialShiftFromParam(params.shift));
 
   const [batch, setBatch] = useState<MilkBatchResponse | null>(null);
   const [evaluation, setEvaluation] = useState<MilkBatchQcEvaluationResponse | null>(null);
@@ -183,8 +199,17 @@ export default function QualityCheckScreen() {
       setEvaluation(evalRes);
       setAnimals(animalsRes);
       setOverrideAudits(overrideRows);
-      if (animalsRes.length > 0 && !animalsRes.some((a) => a.animalId === selectedAnimalId)) {
-        setSelectedAnimalId(animalsRes[0].animalId);
+      const requestedAnimalId = paramString(params.animalId).trim().toLowerCase();
+      const requestedTag = paramString(params.tag).trim().toLowerCase();
+      const selectedFromParams =
+        animalsRes.find((a) => a.animalId.toLowerCase() === requestedAnimalId)?.animalId ??
+        animalsRes.find((a) => a.tag.toLowerCase() === requestedTag)?.animalId;
+      const selectedStillValid = animalsRes.some((a) => a.animalId === selectedAnimalId);
+      const nextSelectedAnimalId = selectedFromParams ?? (selectedStillValid ? selectedAnimalId : animalsRes[0]?.animalId);
+
+      if (nextSelectedAnimalId) {
+        setSelectedAnimalId(nextSelectedAnimalId);
+        setShowAnimalPicker(false);
       }
 
       const mapped: Record<string, CowQcDraft> = {};
@@ -230,6 +255,26 @@ export default function QualityCheckScreen() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, shift]);
+
+  useEffect(() => {
+    setDate(initialDateFromParam(params.date));
+    setShift(initialShiftFromParam(params.shift));
+  }, [params.date, params.shift]);
+
+  useEffect(() => {
+    const requestedAnimalId = paramString(params.animalId).trim().toLowerCase();
+    const requestedTag = paramString(params.tag).trim().toLowerCase();
+    if (!requestedAnimalId && !requestedTag) {
+      return;
+    }
+    const selectedFromParams =
+      animals.find((a) => a.animalId.toLowerCase() === requestedAnimalId)?.animalId ??
+      animals.find((a) => a.tag.toLowerCase() === requestedTag)?.animalId;
+    if (selectedFromParams) {
+      setSelectedAnimalId(selectedFromParams);
+      setShowAnimalPicker(false);
+    }
+  }, [animals, params.animalId, params.tag]);
 
   useEffect(() => {
     setOverrideRecommendedStatus(false);
