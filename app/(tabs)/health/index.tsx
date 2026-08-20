@@ -506,6 +506,11 @@ export default function HealthScreen() {
     return fallbackTitle;
   };
 
+  const selectHealthWatchFilter = (nextTab: HealthTab, nextFilter: DueFilter) => {
+    setTab(nextTab);
+    setDueFilter(nextFilter);
+  };
+
   const applyAutoNextDue = (vaccineKey: VaccineKey, doseDate: string) => {
     const nextDue = autoNextDueDate(vaccineKey, doseDate);
     setVNextDueDate(nextDue ?? "");
@@ -1139,42 +1144,108 @@ export default function HealthScreen() {
           {x(`Health Watch (${summary?.date ?? date})`, `सेहत निगरानी (${summary?.date ?? date})`)}
         </Text>
         <View style={{ marginTop: 8, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, padding: 10, backgroundColor: DairyColors.warningSoft }}>
+          <Pressable
+            onPress={() => selectHealthWatchFilter("VACCINATION", "DUE_TODAY")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: tab === "VACCINATION" && dueFilter === "DUE_TODAY" ? DairyColors.primary : "transparent",
+              borderRadius: 10,
+              padding: 10,
+              backgroundColor: tab === "VACCINATION" && dueFilter === "DUE_TODAY" ? DairyColors.primarySoft : DairyColors.warningSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Today", "आज के टीके")}</Text>
             <Text style={{ marginTop: 4, fontSize: 18, fontWeight: "800", color: DairyColors.textPrimary }}>
               {summary?.vaccinationsDueToday ?? 0}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, padding: 10, backgroundColor: DairyColors.infoSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => selectHealthWatchFilter("VACCINATION", "DUE_SOON")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: tab === "VACCINATION" && dueFilter === "DUE_SOON" ? DairyColors.primary : "transparent",
+              borderRadius: 10,
+              padding: 10,
+              backgroundColor: tab === "VACCINATION" && dueFilter === "DUE_SOON" ? DairyColors.primarySoft : DairyColors.infoSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Soon", "जल्द वाले टीके")}</Text>
             <Text style={{ marginTop: 4, fontSize: 18, fontWeight: "800", color: DairyColors.textPrimary }}>
               {summary?.vaccinationsDueSoon ?? 0}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, padding: 10, backgroundColor: DairyColors.dangerSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => selectHealthWatchFilter("VACCINATION", "OVERDUE")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: tab === "VACCINATION" && dueFilter === "OVERDUE" ? DairyColors.primary : "transparent",
+              borderRadius: 10,
+              padding: 10,
+              backgroundColor: tab === "VACCINATION" && dueFilter === "OVERDUE" ? DairyColors.primarySoft : DairyColors.dangerSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Vaccines Overdue", "बाकी टीके")}</Text>
             <Text style={{ marginTop: 4, fontSize: 18, fontWeight: "800", color: DairyColors.textPrimary }}>
               {summary?.vaccinationsOverdue ?? 0}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, padding: 10, backgroundColor: DairyColors.warningSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => selectHealthWatchFilter("DEWORMING", "DUE_TODAY")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: tab === "DEWORMING" && dueFilter === "DUE_TODAY" ? DairyColors.primary : "transparent",
+              borderRadius: 10,
+              padding: 10,
+              backgroundColor: tab === "DEWORMING" && dueFilter === "DUE_TODAY" ? DairyColors.primarySoft : DairyColors.warningSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Deworm Today", "आज की पेट दवा")}</Text>
             <Text style={{ marginTop: 4, fontSize: 18, fontWeight: "800", color: DairyColors.textPrimary }}>
               {summary?.dewormingDueToday ?? 0}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, padding: 10, backgroundColor: DairyColors.infoSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => selectHealthWatchFilter("DEWORMING", "DUE_SOON")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: tab === "DEWORMING" && dueFilter === "DUE_SOON" ? DairyColors.primary : "transparent",
+              borderRadius: 10,
+              padding: 10,
+              backgroundColor: tab === "DEWORMING" && dueFilter === "DUE_SOON" ? DairyColors.primarySoft : DairyColors.infoSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Deworm Soon", "जल्द वाली पेट दवा")}</Text>
             <Text style={{ marginTop: 4, fontSize: 18, fontWeight: "800", color: DairyColors.textPrimary }}>
               {summary?.dewormingDueSoon ?? 0}
             </Text>
-          </View>
-          <View style={{ flex: 1, minWidth: 120, borderRadius: 10, padding: 10, backgroundColor: DairyColors.dangerSoft }}>
+          </Pressable>
+          <Pressable
+            onPress={() => selectHealthWatchFilter("DEWORMING", "OVERDUE")}
+            style={{
+              flex: 1,
+              minWidth: 120,
+              borderWidth: 1,
+              borderColor: tab === "DEWORMING" && dueFilter === "OVERDUE" ? DairyColors.primary : "transparent",
+              borderRadius: 10,
+              padding: 10,
+              backgroundColor: tab === "DEWORMING" && dueFilter === "OVERDUE" ? DairyColors.primarySoft : DairyColors.dangerSoft,
+            }}
+          >
             <Text style={{ color: DairyColors.textSecondary }}>{x("Deworm Overdue", "बाकी पेट दवा")}</Text>
             <Text style={{ marginTop: 4, fontSize: 18, fontWeight: "800", color: DairyColors.textPrimary }}>
               {summary?.dewormingOverdue ?? 0}
             </Text>
-          </View>
+          </Pressable>
         </View>
       </View>
 
@@ -2106,6 +2177,12 @@ export default function HealthScreen() {
           {tab === "VACCINATION"
             ? x(`Vaccination Records (${selectedAnimal?.tag ?? "No animal"})`, `टीका रिकॉर्ड (${selectedAnimal?.tag ?? "जानवर नहीं"})`)
             : x(`Deworming Records (${selectedAnimal?.tag ?? "No animal"})`, `पेट दवा रिकॉर्ड (${selectedAnimal?.tag ?? "जानवर नहीं"})`)}
+        </Text>
+        <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+          {x(
+            `Showing ${tab === "VACCINATION" ? "vaccines" : "deworming"}: ${dueFilterLabel(dueFilter)} for selected animal`,
+            `चुने हुए पशु के लिए ${tab === "VACCINATION" ? "टीके" : "पेट दवा"}: ${dueFilterLabel(dueFilter)}`
+          )}
         </Text>
 
         <View style={{ marginTop: 8, flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
