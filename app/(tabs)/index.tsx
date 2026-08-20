@@ -133,6 +133,7 @@ function ShiftCard({
   accentBackground,
   statusLabel,
   shiftLabel,
+  onPress,
 }: {
   shift: "AM" | "PM";
   totalLiters: number;
@@ -140,11 +141,13 @@ function ShiftCard({
   accentBackground: string;
   statusLabel: (status?: QcStatus) => string;
   shiftLabel: (shift: "AM" | "PM") => string;
+  onPress: () => void;
 }) {
   const tone = getStatusTone(qcStatus);
 
   return (
-    <View
+    <Pressable
+      onPress={onPress}
       style={{
         flex: 1,
         borderRadius: 14,
@@ -199,8 +202,9 @@ function ShiftCard({
           }}
         />
         <Text style={{ fontWeight: "700", color: tone.text }}>{statusLabel(qcStatus)}</Text>
+        <Ionicons name="chevron-forward" size={14} color={tone.text} />
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -255,13 +259,16 @@ function PendingCustomerCard({
   row,
   pendingLabel,
   transactionLabel,
+  onPress,
 }: {
   row: CustomerLedgerRowResponse;
   pendingLabel: string;
   transactionLabel: string;
+  onPress: () => void;
 }) {
   return (
-    <View
+    <Pressable
+      onPress={onPress}
       style={{
         marginTop: 8,
         borderRadius: 10,
@@ -275,7 +282,7 @@ function PendingCustomerCard({
       <Text style={{ marginTop: 3, color: DairyColors.warning }}>
         {pendingLabel} {money(row.totalPending)} | {transactionLabel} {row.totalTransactions}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -781,6 +788,7 @@ export default function DashboardScreen() {
               accentBackground={DairyColors.morningSoft}
               statusLabel={statusLabel}
               shiftLabel={shiftLabel}
+              onPress={() => router.push({ pathname: "/qc", params: { date, shift: "AM" } })}
             />
             <ShiftCard
               shift="PM"
@@ -789,6 +797,7 @@ export default function DashboardScreen() {
               accentBackground={DairyColors.eveningSoft}
               statusLabel={statusLabel}
               shiftLabel={shiftLabel}
+              onPress={() => router.push({ pathname: "/qc", params: { date, shift: "PM" } })}
             />
           </View>
         </>
@@ -867,7 +876,8 @@ export default function DashboardScreen() {
           </Text>
           <>
             <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              <View
+              <Pressable
+                onPress={() => router.push("/sales")}
                 style={{
                   flex: 1,
                   minWidth: 130,
@@ -880,9 +890,10 @@ export default function DashboardScreen() {
                 <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                   {money(salesSummary?.totalRevenue ?? 0)}
                 </Text>
-              </View>
+              </Pressable>
 
-              <View
+              <Pressable
+                onPress={() => router.push("/sales")}
                 style={{
                   flex: 1,
                   minWidth: 130,
@@ -895,9 +906,10 @@ export default function DashboardScreen() {
                 <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                   {money(salesSummary?.totalReceived ?? 0)}
                 </Text>
-              </View>
+              </Pressable>
 
-              <View
+              <Pressable
+                onPress={() => router.push("/sales")}
                 style={{
                   flex: 1,
                   minWidth: 130,
@@ -910,9 +922,10 @@ export default function DashboardScreen() {
                 <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                   {money(salesSummary?.totalPending ?? 0)}
                 </Text>
-              </View>
+              </Pressable>
 
-              <View
+              <Pressable
+                onPress={() => router.push("/sales")}
                 style={{
                   flex: 1,
                   minWidth: 130,
@@ -925,9 +938,10 @@ export default function DashboardScreen() {
                 <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                   {salesSummary?.totalTransactions ?? 0}
                 </Text>
-              </View>
+              </Pressable>
 
-              <View
+              <Pressable
+                onPress={() => router.push("/expenses")}
                 style={{
                   flex: 1,
                   minWidth: 130,
@@ -940,9 +954,10 @@ export default function DashboardScreen() {
                 <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                   {money(totalExpense)}
                 </Text>
-              </View>
+              </Pressable>
 
-              <View
+              <Pressable
+                onPress={() => router.push("/sales")}
                 style={{
                   flex: 1,
                   minWidth: 130,
@@ -955,7 +970,7 @@ export default function DashboardScreen() {
                 <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                   {money(netProfit)}
                 </Text>
-              </View>
+              </Pressable>
             </View>
 
             <ProgressRow label={x("Collection efficiency", "वसूली दक्षता")} value={collectionRate} color={DairyColors.success} />
@@ -983,24 +998,33 @@ export default function DashboardScreen() {
             {x("Delivery Progress", "डिलीवरी प्रगति")}
           </Text>
           <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}>
+            <Pressable
+              onPress={() => router.push("/delivery-ops")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Total Stops", "कुल स्टॉप")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {deliverySummary.totalStops}
               </Text>
-            </View>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.successSoft, padding: 10 }}>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/delivery-ops")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.successSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Delivered", "डिलीवर")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {deliverySummary.deliveredStops}
               </Text>
-            </View>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/delivery-ops")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Pending", "बाकी")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {deliverySummary.pendingStops}
               </Text>
-            </View>
+            </Pressable>
           </View>
           <Text style={{ marginTop: 10, color: DairyColors.textSecondary }}>
             {x(
@@ -1026,30 +1050,42 @@ export default function DashboardScreen() {
             {x("Feed Operations", "फीड ऑपरेशन")}
           </Text>
           <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}>
+            <Pressable
+              onPress={() => router.push("/feed")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.infoSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Materials", "सामग्री")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {feedSummary?.totalMaterials ?? 0}
               </Text>
-            </View>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/stock")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.warningSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Low Stock", "कम स्टॉक")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {feedSummary?.lowStockMaterials ?? 0}
               </Text>
-            </View>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.accentSoft, padding: 10 }}>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/feed")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.accentSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Open Tasks", "खुले टास्क")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {feedSummary?.openTasks ?? 0}
               </Text>
-            </View>
-            <View style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.successSoft, padding: 10 }}>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/feed")}
+              style={{ flex: 1, minWidth: 120, borderRadius: 12, backgroundColor: DairyColors.successSoft, padding: 10 }}
+            >
               <Text style={{ color: DairyColors.textSecondary }}>{x("Done Today", "आज पूरे")}</Text>
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {feedSummary?.doneTasksToday ?? 0}
               </Text>
-            </View>
+            </Pressable>
           </View>
         </View>
       ) : null}
@@ -1072,7 +1108,8 @@ export default function DashboardScreen() {
             {x("Vaccination and deworming due tracking", "टीका और पेट की दवा की देय स्थिति")}
           </Text>
           <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-            <View
+            <Pressable
+              onPress={() => router.push("/health")}
               style={{
                 flex: 1,
                 minWidth: 130,
@@ -1085,8 +1122,9 @@ export default function DashboardScreen() {
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {healthSummary?.vaccinationsDueToday ?? 0}
               </Text>
-            </View>
-            <View
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/health")}
               style={{
                 flex: 1,
                 minWidth: 130,
@@ -1099,8 +1137,9 @@ export default function DashboardScreen() {
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {healthSummary?.vaccinationsOverdue ?? 0}
               </Text>
-            </View>
-            <View
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/health")}
               style={{
                 flex: 1,
                 minWidth: 130,
@@ -1113,8 +1152,9 @@ export default function DashboardScreen() {
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {healthSummary?.dewormingDueToday ?? 0}
               </Text>
-            </View>
-            <View
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/health")}
               style={{
                 flex: 1,
                 minWidth: 130,
@@ -1127,7 +1167,7 @@ export default function DashboardScreen() {
               <Text style={{ marginTop: 4, fontWeight: "800", color: DairyColors.textPrimary }}>
                 {healthSummary?.dewormingOverdue ?? 0}
               </Text>
-            </View>
+            </Pressable>
           </View>
         </View>
       ) : null}
@@ -1157,6 +1197,7 @@ export default function DashboardScreen() {
                 row={row}
                 pendingLabel={x("Pending", "बाकी")}
                 transactionLabel={x("Transactions", "लेनदेन")}
+                onPress={() => router.push("/sales")}
               />
             ))
           )}

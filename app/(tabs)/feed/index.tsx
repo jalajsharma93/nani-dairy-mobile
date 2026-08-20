@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Pressable, Text, TextInput, View } from "react-native";
 import {
@@ -77,6 +77,7 @@ function inferRationPhase(animal?: AnimalResponse | null): FeedRationPhase {
 
 export default function FeedScreen() {
   const params = useLocalSearchParams<{ animalId?: string; tag?: string }>();
+  const router = useRouter();
   const { user } = useAuth();
   const { x, t } = useI18n();
   const permissions = resolveRolePermissions(user?.role);
@@ -1581,24 +1582,33 @@ export default function FeedScreen() {
 
               {!isWorkerChecklistOnly ? (
                 <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.accentSoft, padding: 8, minWidth: 130 }}>
+                  <Pressable
+                    onPress={() => router.push("/stock")}
+                    style={{ borderRadius: 10, backgroundColor: DairyColors.accentSoft, padding: 8, minWidth: 130 }}
+                  >
                     <Text style={{ color: DairyColors.textSecondary }}>{x("Materials", "कच्चा माल")}</Text>
                     <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
                       {managementSummary ? managementSummary.totalMaterials : loadingManagement ? "..." : "0"}
                     </Text>
-                  </View>
-                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 8, minWidth: 130 }}>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => router.push("/stock")}
+                    style={{ borderRadius: 10, backgroundColor: DairyColors.warningSoft, padding: 8, minWidth: 130 }}
+                  >
                     <Text style={{ color: DairyColors.textSecondary }}>{x("Low Stock", "कम स्टॉक")}</Text>
                     <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
                       {managementSummary ? managementSummary.lowStockMaterials : loadingManagement ? "..." : "0"}
                     </Text>
-                  </View>
-                  <View style={{ borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8, minWidth: 130 }}>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setTaskFilterAssignee(TASK_FILTER_ALL)}
+                    style={{ borderRadius: 10, backgroundColor: DairyColors.infoSoft, padding: 8, minWidth: 130 }}
+                  >
                     <Text style={{ color: DairyColors.textSecondary }}>{x("Open Tasks", "खुले टास्क")}</Text>
                     <Text style={{ marginTop: 2, color: DairyColors.textPrimary, fontWeight: "800" }}>
                       {managementSummary ? managementSummary.openTasks : loadingManagement ? "..." : "0"}
                     </Text>
-                  </View>
+                  </Pressable>
                 </View>
               ) : null}
 

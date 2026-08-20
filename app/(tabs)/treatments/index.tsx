@@ -858,6 +858,28 @@ export default function TreatmentsScreen() {
             onPress={() =>
               selectedAnimal &&
               router.push({
+                pathname: "/animals/[animalId]",
+                params: { animalId: selectedAnimal.animalId },
+              })
+            }
+            style={{
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: DairyColors.border,
+              backgroundColor: DairyColors.surfaceMuted,
+              paddingHorizontal: 12,
+              paddingVertical: 9,
+            }}
+          >
+            <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
+              {x("Animal Log", "जानवर लॉग")}
+            </Text>
+          </Pressable>
+          <Pressable
+            disabled={!selectedAnimal}
+            onPress={() =>
+              selectedAnimal &&
+              router.push({
                 pathname: "/health",
                 params: { animalId: selectedAnimal.animalId, tag: selectedAnimal.tag },
               })

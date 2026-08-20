@@ -19,6 +19,7 @@ import { todayLocalISO } from "@/src/utils/date";
 import { DateInput } from "../../../components/date-input";
 
 const STAGES: ProcessingStockStage[] = ["MILK", "CURD", "BUTTERMILK", "GHEE"];
+type RawMaterialFilter = "ALL" | "LOW_STOCK";
 
 const quantityLabel = (stage: ProcessingStockStage, qty: number) => {
   const unit = stage === "GHEE" || stage === "CURD" ? "kg" : "L";
@@ -35,6 +36,7 @@ export default function StockManagerScreen() {
   const [summary, setSummary] = useState<ProcessingStockSummaryResponse | null>(null);
   const [transactions, setTransactions] = useState<ProcessingStockTxnResponse[]>([]);
   const [rawMaterials, setRawMaterials] = useState<FeedMaterialResponse[]>([]);
+  const [rawMaterialFilter, setRawMaterialFilter] = useState<RawMaterialFilter>("ALL");
   const [inventoryForecast, setInventoryForecast] = useState<FeedInventoryForecastResponse | null>(null);
   const [forecastLookbackDays, setForecastLookbackDays] = useState<30 | 90>(30);
   const [loading, setLoading] = useState(false);
@@ -70,6 +72,18 @@ export default function StockManagerScreen() {
     },
     [x]
   );
+
+  const filteredRawMaterials = useMemo(() => {
+    if (rawMaterialFilter === "LOW_STOCK") {
+      return rawMaterials.filter((row) => row.lowStock);
+    }
+    return rawMaterials;
+  }, [rawMaterialFilter, rawMaterials]);
+
+  const rawMaterialFilterLabel = (filter: RawMaterialFilter) => {
+    if (filter === "LOW_STOCK") return x("Low Stock", "लो स्टॉक");
+    return x("Raw Items", "रॉ आइटम");
+  };
 
   const load = useCallback(async () => {
     try {
@@ -271,24 +285,49 @@ export default function StockManagerScreen() {
             />
 
             <View style={{ marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.accentSoft }}>
+              <Pressable
+                onPress={() => setRawMaterialFilter("ALL")}
+                style={{
+                  flex: 1,
+                  minWidth: 120,
+                  borderWidth: 1,
+                  borderColor: rawMaterialFilter === "ALL" ? DairyColors.primary : "transparent",
+                  borderRadius: 12,
+                  padding: 10,
+                  backgroundColor: rawMaterialFilter === "ALL" ? DairyColors.primarySoft : DairyColors.accentSoft,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Raw Items", "रॉ आइटम")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontSize: 18, fontWeight: "800" }}>
                   {summary?.rawMaterialItems ?? 0}
                 </Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.dangerSoft }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setRawMaterialFilter("LOW_STOCK")}
+                style={{
+                  flex: 1,
+                  minWidth: 120,
+                  borderWidth: 1,
+                  borderColor: rawMaterialFilter === "LOW_STOCK" ? DairyColors.primary : "transparent",
+                  borderRadius: 12,
+                  padding: 10,
+                  backgroundColor: rawMaterialFilter === "LOW_STOCK" ? DairyColors.primarySoft : DairyColors.dangerSoft,
+                }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Low Stock", "लो स्टॉक")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontSize: 18, fontWeight: "800" }}>
                   {summary?.lowStockRawMaterials ?? 0}
                 </Text>
-              </View>
-              <View style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.infoSoft }}>
+              </Pressable>
+              <Pressable
+                onPress={() => setRawMaterialFilter("ALL")}
+                style={{ flex: 1, minWidth: 120, borderRadius: 12, padding: 10, backgroundColor: DairyColors.infoSoft }}
+              >
                 <Text style={{ color: DairyColors.textSecondary }}>{x("Raw Value", "रॉ वैल्यू")}</Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textPrimary, fontSize: 18, fontWeight: "800" }}>
                   Rs {(summary?.rawMaterialStockValue ?? 0).toFixed(2)}
                 </Text>
-              </View>
+              </Pressable>
             </View>
 
             <View
@@ -303,6 +342,12 @@ export default function StockManagerScreen() {
             >
                 <Text style={{ color: DairyColors.textPrimary, fontWeight: "800" }}>
                   {x("Raw Material Details", "रॉ मटेरियल डिटेल")}
+                </Text>
+                <Text style={{ marginTop: 3, color: DairyColors.textSecondary }}>
+                  {x(
+                    `Showing: ${rawMaterialFilterLabel(rawMaterialFilter)}`,
+                    `दिखा रहे हैं: ${rawMaterialFilterLabel(rawMaterialFilter)}`
+                  )}
                 </Text>
                 <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
                   {inventoryForecast
@@ -358,12 +403,12 @@ export default function StockManagerScreen() {
                     </Text>
                   </View>
                 </View>
-                {rawMaterials.length === 0 ? (
+                {filteredRawMaterials.length === 0 ? (
                   <Text style={{ marginTop: 4, color: DairyColors.textSecondary }}>
                     {x("No raw materials found.", "कोई रॉ मटेरियल नहीं मिला।")}
                   </Text>
                 ) : (
-                rawMaterials.slice(0, 12).map((row) => {
+                filteredRawMaterials.slice(0, 12).map((row) => {
                   const forecastRow = forecastByMaterialId.get(row.feedMaterialId);
                   const riskColor =
                     forecastRow?.riskLevel === "HIGH"
